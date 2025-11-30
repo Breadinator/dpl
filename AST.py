@@ -28,6 +28,7 @@ class NodeType(Enum):
     NewStructExpression = "NewStructExpression"
     FieldAccessExpression = "FieldAccessExpression"
     EnumVariantAccessExpression = "EnumVariantAccessExpression"
+    MatchExpression = "MatchExpression"
 
     # Literals
     I32Literal = "I32Literal"
@@ -406,6 +407,21 @@ class EnumVariantAccessExpression(Expression):
             "type": self.type().value,
             "name": self.name.json(),
             "variant": self.variant.json(),
+        }
+
+class MatchExpression(Expression):
+    def __init__(self, match: Expression, cases: list[tuple[EnumVariantAccessExpression, BlockExpression]]) -> None:
+        self.match = match
+        self.cases = cases
+
+    def type(self) -> NodeType:
+        return NodeType.MatchExpression
+    
+    def json(self) -> dict[str, Any]:
+        return {
+            "type": self.type().value,
+            "match": self.match.json(),
+            "cases": [[case[0].json(), case[1].json()] for case in self.cases]
         }
 # endregion
 

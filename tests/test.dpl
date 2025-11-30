@@ -6,5 +6,12 @@ fn main() -> i32 {
 
     let foo: Foo = Foo::Baz;
 
-    0
+    match foo {
+        Foo::Bar => {
+            1
+        }
+        Foo::Baz => {
+            0
+        }
+    }
 }

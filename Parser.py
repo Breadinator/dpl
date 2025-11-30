@@ -7,7 +7,7 @@ from AST import FunctionParameter
 from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement
 from AST import StructStatement, EnumStatement
 from AST import WhileStatement, BreakStatement, ContinueStatement, ForStatement
-from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression
+from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression, MatchExpression
 from AST import NewStructExpression, FieldAccessExpression, EnumVariantAccessExpression
 from AST import I32Literal, F32Literal, IdentifierLiteral, BooleanLiteral, StringLiteral
 
@@ -67,6 +67,7 @@ class Parser:
             TokenType.MINUS: self.__parse_prefix_expression,
             TokenType.BANG: self.__parse_prefix_expression,
             TokenType.NEW: self.__parse_new_struct_expression,
+            TokenType.MATCH: self.__parse_match_expression,
         }
         self.infix_parse_fns: dict[TokenType, Callable[[Expression], Optional[Expression]]] = {
             TokenType.PLUS: self.__parse_infix_expression,
@@ -708,6 +709,47 @@ class Parser:
         field_ident = IdentifierLiteral(self.current_token.literal)
         return EnumVariantAccessExpression(lhs, field_ident)
 
+    def __parse_match_expression(self) -> MatchExpression:
+        self.__next_token()
+        match_expr = self.__parse_expression(PrecedenceType.P_LOWEST)
+        if match_expr is None:
+            raise ParserException("couldn't parse match expression")
+
+        if not self.__expect_peek(TokenType.LBRACE):
+            raise ParserException("expected '{' after match expression")
+        self.__next_token()
+
+        cases: list[tuple[EnumVariantAccessExpression, BlockExpression]] = []
+        while not self.__current_token_is(TokenType.RBRACE) and not self.__current_token_is(TokenType.EOF):
+            if not self.__current_token_is(TokenType.IDENT):
+                raise ExpectedTokenError(f"expected IDENT got {self.current_token}")
+            lhs = IdentifierLiteral(self.current_token.literal)
+
+            if not self.__expect_peek(TokenType.DOUBLE_COLON):
+                raise ParserException("expected '::' in match case")
+            if not self.__expect_peek(TokenType.IDENT):
+                raise ParserException("expected variant identifier in match case")
+            rhs = IdentifierLiteral(self.current_token.literal)
+
+            enum_access = EnumVariantAccessExpression(lhs, rhs)
+
+            if not self.__expect_peek(TokenType.FATARROW):
+                raise ParserException("expected '=>' after match case")
+            block = self.__parse_block_expression()
+            if block is None:
+                raise ParserException("couldn't parse block for match case")
+
+            cases.append((enum_access, block))
+
+            self.__next_token()
+
+        if not self.__current_token_is(TokenType.RBRACE):
+            self.__expect_peek(TokenType.RBRACE)
+        self.__next_token()
+
+        return MatchExpression(match_expr, cases)
+
+            
     # endregion
 
     # region Prefix Methods

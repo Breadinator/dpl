@@ -7,7 +7,7 @@ from AST import Node, NodeType, Expression, Program
 from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement
 from AST import StructStatement, EnumStatement
 from AST import WhileStatement, ForStatement, BreakStatement, ContinueStatement
-from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression, NewStructExpression, FieldAccessExpression, EnumVariantAccessExpression
+from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression, NewStructExpression, FieldAccessExpression, EnumVariantAccessExpression, MatchExpression
 from AST import I32Literal, F32Literal, IdentifierLiteral, BooleanLiteral, StringLiteral
 
 from Environment import Environment
@@ -695,6 +695,57 @@ class Compiler:
             raise FieldMismatchError(f"enum `{node.name.value}` doesn't have variant `{node.variant.value}`")
         idx = enum_metadata.variants.index(node.variant.value)
         return ir.Constant(ir.IntType(32), idx), ir.IntType(32)
+    
+    def __visit_match_expression(self, node: MatchExpression) -> tuple[ir.Value, ir.Type]:
+        value, typ = self.__resolve_value(node.match)
+        if value is None or typ is None:
+            raise ValueResolverError
+        if typ != ir.IntType(32):
+            raise CompilerException("match didn't evaluate to i32")
+        
+        counter = self.__increment_counter()
+        fn = self.builder.function
+
+        blocks: list[tuple[int, ir.Block, ir.Value]] = []
+
+        prev_block = self.builder.block
+
+        for evae, block_expression in node.cases:
+            enum = self.env.lookup_enum(evae.name.value)
+            if enum is None:
+                raise LookupError(f"enum named `{evae.name.value}` not found")
+            if evae.variant.value not in enum.variants:
+                raise FieldMismatchError(f"variant {evae.variant.value} doesn't exist in enum `{evae.name.value}`")
+            variant_value = enum.variants.index(evae.variant.value)
+
+            block = fn.append_basic_block(f"switch_{counter}_case_{variant_value}")
+            self.builder.position_at_start(block)
+
+            result, result_ty = self.__visit_block_expression(block_expression)
+            if result is None:
+                result = ir.Constant(ir.IntType(32), 0)
+            blocks.append((variant_value, block, result))
+
+        end = fn.append_basic_block(f"switch_{counter}_end")
+
+        self.builder.position_at_end(prev_block)
+        switch = self.builder.switch(value, end)
+        for variant_value, block, _ in blocks:
+            switch.add_case(ir.Constant(ir.IntType(32), variant_value), block)
+
+        for _, block, _ in blocks:
+            self.builder.position_at_end(block)
+            if not self.builder.block.is_terminated:
+                self.builder.branch(end)
+
+        self.builder.position_at_start(end)
+        phi = self.builder.phi(ir.IntType(32))
+        for _, block, result in blocks:
+            phi.add_incoming(result, block)
+        phi.add_incoming(ir.Constant(ir.IntType(32), 0), prev_block)
+        return phi, ir.IntType(32)
+
+
     # endregion
 
     # endregion
@@ -739,7 +790,9 @@ class Compiler:
             case NodeType.FieldAccessExpression:
                 return self.__visit_field_access_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.EnumVariantAccessExpression:
-                return self.__visit_enum_variant_access_expression(node)
+                return self.__visit_enum_variant_access_expression(node) # pyright: ignore[reportArgumentType]
+            case NodeType.MatchExpression:
+                return self.__visit_match_expression(node)
             
             case default:
                 raise NotImplementedError(f"Not implemented: {default}")
