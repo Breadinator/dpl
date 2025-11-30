@@ -1,7 +1,13 @@
+import "math.dpl";
+
 fn main() -> i32 {
     let a: i32 = 0;
 
     for (let i: i32 = 0; i < 10; i += 1) {
+        if i == 2 {
+            printf("i + 8 = %i\n", add(i, 8));
+            continue;
+        };
         if i == 5 {
             break;
         };

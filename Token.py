@@ -62,6 +62,7 @@ class TokenType(Enum):
     FOR = "FOR"
     CONTINUE = "CONTINUE"
     BREAK = "BREAK"
+    IMPORT = "IMPORT"
 
     # Typing
     TYPE = "TYPE"
@@ -91,6 +92,7 @@ KEYWORDS: dict[str, TokenType] = {
     "for": TokenType.FOR,
     "continue": TokenType.CONTINUE,
     "break": TokenType.BREAK,
+    "import": TokenType.IMPORT,
 }
 
 TYPE_KEYWORDS: list[str] = ["i32", "f32", "str", "void"]

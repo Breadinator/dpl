@@ -15,6 +15,7 @@ class NodeType(Enum):
     ForStatement = "ForStatement"
     ContinueStatement = "ContinueStatement"
     BreakStatement = "BreakStatement"
+    ImportStatement = "ImportStatement"
 
     # Expressions
     InfixExpression = "InfixExpression"
@@ -222,6 +223,19 @@ class ForStatement(Statement):
             "condition": self.condition.json(),
             "action": self.action.json(),
             "body": self.body.json(),
+        }
+
+class ImportStatement(Statement):
+    def __init__(self, path: str) -> None:
+        self.path = path
+    
+    def type(self) -> NodeType:
+        return NodeType.ImportStatement
+    
+    def json(self) -> dict[str, Any]:
+        return {
+            "type": self.type().value,
+            "path": self.path,
         }
 # endregion
 

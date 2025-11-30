@@ -1,14 +1,17 @@
 from llvmlite import ir
-from typing import Optional
-
 from llvmlite.ir import instructions
+from typing import Optional
+import os
 
 from AST import Node, NodeType, Expression, Program
-from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, WhileStatement, ForStatement, BreakStatement, ContinueStatement
+from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement
+from AST import WhileStatement, ForStatement, BreakStatement, ContinueStatement
 from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression
 from AST import I32Literal, F32Literal, IdentifierLiteral, BooleanLiteral, StringLiteral
 
 from Environment import Environment
+from Lexer import Lexer
+from Parser import Parser
 
 class Compiler:
     def __init__(self) -> None:
@@ -33,6 +36,8 @@ class Compiler:
 
         self.breakpoints: list[ir.Block] = []
         self.continues: list[ir.Block] = []
+
+        self.global_parsed_modules: dict[str, Program] = {}
 
     def __initialize_builtins(self) -> None:
         def define_bools():
@@ -88,6 +93,8 @@ class Compiler:
                 self.__visit_break_statement(node) # pyright: ignore[reportArgumentType]
             case NodeType.ContinueStatement:
                 self.__visit_continue_statement(node) # pyright: ignore[reportArgumentType]
+            case NodeType.ImportStatement:
+                self.__visit_import_statement(node) # pyright: ignore[reportArgumentType]
 
             # Expressions
             case NodeType.InfixExpression:
@@ -250,34 +257,70 @@ class Compiler:
         prev_env = self.env
         self.env = Environment(parent=prev_env)
 
+        # Compile var declaration
         self.compile(node.var_declaration)
 
-        for_loop_entry = self.builder.append_basic_block(f"for_loop_entry_{self.__increment_counter()}")
-        for_loop_otherwise = self.builder.append_basic_block(f"for_loop_otherwise{self.counter}")
+        func = self.builder.function
+        cond_bb = func.append_basic_block(f"for_cond_{self.counter}")
+        body_bb = func.append_basic_block(f"for_body_{self.counter}")
+        inc_bb = func.append_basic_block(f"for_inc_{self.counter}")
+        end_bb = func.append_basic_block(f"for_end_{self.counter}")
 
-        self.breakpoints.append(for_loop_otherwise)
-        self.continues.append(for_loop_entry)
+        # Setup break/continue
+        self.breakpoints.append(end_bb)
+        self.continues.append(inc_bb)
 
-        self.builder.branch(for_loop_entry)
-        self.builder.position_at_start(for_loop_entry)
+        self.builder.branch(cond_bb)
 
-        self.compile(node.body)
-        self.compile(node.action)
-
+        # --- Condition ---
+        self.builder.position_at_start(cond_bb)
         test, _ = self.__resolve_value(node.condition)
         if test is None:
             return None
-        self.builder.cbranch(test, for_loop_entry, for_loop_otherwise)
-        self.builder.position_at_start(for_loop_otherwise)
-        
+        self.builder.cbranch(test, body_bb, end_bb)
+
+        # --- Body ---
+        self.builder.position_at_start(body_bb)
+        self.compile(node.body)
+        # If body did not branch, jump to increment
+        if getattr(self.builder.block, "terminator", None) is None:
+            self.builder.branch(inc_bb)
+
+        # --- Increment ---
+        self.builder.position_at_start(inc_bb)
+        self.compile(node.action)
+        self.builder.branch(cond_bb)
+
+        # --- End ---
+        self.builder.position_at_start(end_bb)
+
         self.breakpoints.pop()
         self.continues.pop()
+        self.env = prev_env
+
     
     def __visit_break_statement(self, node: BreakStatement) -> None:
         self.builder.branch(self.breakpoints[-1])
     
     def __visit_continue_statement(self, node: ContinueStatement) -> None:
         self.builder.branch(self.continues[-1])
+
+    def __visit_import_statement(self, node: ImportStatement) -> None:
+        if self.global_parsed_modules.get(node.path) is not None:
+            return None
+        with open(os.path.abspath(f"tests/{node.path}"), "r") as f:
+            module_code = f.read()
+        
+        l = Lexer(module_code)
+        p = Parser(l)
+        program = p.parse_program()
+        if len(p.errors) > 0:
+            print(f"Error in imported module: {node.path}")
+            for err in p.errors:
+                print(err)
+            exit(1)
+        self.compile(program)
+        self.global_parsed_modules[node.path] = program
     # endregion
 
     # region Expressions

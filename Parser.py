@@ -3,7 +3,8 @@ from Token import Token, TokenType
 
 from AST import Statement, Expression, Program
 from AST import FunctionParameter
-from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, WhileStatement, BreakStatement, ContinueStatement, ForStatement
+from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement
+from AST import WhileStatement, BreakStatement, ContinueStatement, ForStatement
 from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression
 from AST import I32Literal, F32Literal, IdentifierLiteral, BooleanLiteral, StringLiteral
 
@@ -154,6 +155,8 @@ class Parser:
                 return self.__parse_continue_statement()
             case TokenType.BREAK:
                 return self.__parse_break_statement()
+            case TokenType.IMPORT:
+                return self.__parse_import_statement()
             case _:
                 return self.__parse_expression_statement()
     
@@ -346,6 +349,14 @@ class Parser:
     def __parse_continue_statement(self) -> ContinueStatement:
         self.__next_token()
         return ContinueStatement()
+    
+    def __parse_import_statement(self) -> Optional[ImportStatement]:
+        if not self.__expect_peek(TokenType.STRING):
+            return None
+        stmt = ImportStatement(self.current_token.literal)
+        if not self.__expect_peek(TokenType.SEMICOLON):
+            return None
+        return stmt
     # endregion
 
     # region Expression Methods
