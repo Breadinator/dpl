@@ -85,6 +85,8 @@ class PointerType(Type):
     The type of all pointer values.
     By default (without specialisation) represents an opaque pointer.
     """
+    pointee: ir.PointerType
+
     is_opaque = ...
     is_pointer = ...
     null = ...
@@ -485,7 +487,7 @@ class IdentifiedStructType(BaseStructType):
     def __hash__(self) -> int:
         ...
     
-    def set_body(self, *elems): # -> None:
+    def set_body(self, *elems: ir.Type) -> None:
         ...
     
 

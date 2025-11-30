@@ -713,7 +713,7 @@ class Block(NamedValue):
         ...
     
     @property
-    def is_terminated(self): # -> bool:
+    def is_terminated(self) -> bool:
         ...
     
     @property

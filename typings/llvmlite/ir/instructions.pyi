@@ -139,7 +139,7 @@ class SwitchInstr(PredictableInstr, Terminator):
     def value(self):
         ...
     
-    def add_case(self, val, block): # -> None:
+    def add_case(self, val: ir.Value, block: ir.Block) -> None:
         ...
     
     def descr(self, buf): # -> None:

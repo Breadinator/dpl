@@ -155,7 +155,7 @@ class Compiler:
             # Variable already exists, just store new value
             ptr = existing_ptr
             # If value is a pointer but the stored type is a struct, store the dereferenced value
-            if isinstance(value.type, ir.PointerType) and isinstance(ptr.type.pointee, ir.LiteralStructType):
+            if isinstance(value.type, ir.PointerType) and isinstance(ptr.type, ir.PointerType) and isinstance(ptr.type.pointee, ir.LiteralStructType):
                 value = self.builder.load(value)
             self.builder.store(value, ptr)
 
@@ -665,12 +665,12 @@ class Compiler:
         else:
             check_type = base_type
 
-        if not isinstance(check_type, (ir.IdentifiedStructType, ir.LiteralStructType)):
+        if not isinstance(check_type, ir.IdentifiedStructType):
             raise TypeMismatchError(f"field access base must be a struct, got {check_type}")
 
         # Lookup struct info
         struct_type, field_names, field_types = self.env.lookup_struct(check_type.name)
-        if struct_type is None:
+        if struct_type is None or field_names is None or field_types is None:
             raise LookupError(f"struct `{check_type.name}` not found")
         if field_name not in field_names:
             raise FieldMismatchError(f"struct `{check_type.name}` has no field `{field_name}`")
@@ -797,7 +797,7 @@ class Compiler:
             case NodeType.EnumVariantAccessExpression:
                 return self.__visit_enum_variant_access_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.MatchExpression:
-                return self.__visit_match_expression(node)
+                return self.__visit_match_expression(node) # pyright: ignore[reportArgumentType]
             
             case default:
                 raise NotImplementedError(f"Not implemented: {default}")
@@ -860,11 +860,9 @@ class Compiler:
     def __define_struct(
         self, name: str, field_names: list[str], field_type_names: list[str]
     ) -> ir.IdentifiedStructType:
-        # Create an opaque struct first (needed for recursive types)
-        identified = ir.global_context.get_identified_type(name)
-        
-        # Register struct early in environment
-        self.env.define_struct(name, identified, field_names, None)
+        identified = ir.global_context.get_identified_type(name) # type: ignore
+        if not isinstance(identified, ir.IdentifiedStructType):
+            raise Exception("this is annoying")
 
         resolved_types: list[ir.Type] = []
         for tname in field_type_names:
@@ -872,20 +870,10 @@ class Compiler:
             if typ is None:
                 raise TypeError(f"unknown field type '{tname}' for struct '{name}'")
             
-            # Do NOT wrap struct types in pointers anymore
-            # Everything is embedded by value
             resolved_types.append(typ)
 
-        # Set the actual body of the struct
         identified.set_body(*resolved_types)
         
-        # Update environment with resolved types
         self.env.define_struct(name, identified, field_names, resolved_types)
         return identified
-
-    def __is_struct_type(self, t: ir.Type) -> bool:
-        return isinstance(t, (ir.IdentifiedStructType, ir.LiteralStructType))
-    
-    def __is_pointer_to_struct(self, t: ir.Type) -> bool:
-        return isinstance(t, ir.PointerType) and self.__is_struct_type(t.pointee)
     # endregion
