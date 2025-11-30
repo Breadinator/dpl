@@ -4,10 +4,11 @@ from Exceptions import *
 
 from AST import Statement, Expression, Program
 from AST import FunctionParameter
-from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement, StructStatement
+from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement
+from AST import StructStatement, EnumStatement
 from AST import WhileStatement, BreakStatement, ContinueStatement, ForStatement
 from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression
-from AST import NewStructExpression, FieldAccessExpression, EnumStatement
+from AST import NewStructExpression, FieldAccessExpression, EnumVariantAccessExpression
 from AST import I32Literal, F32Literal, IdentifierLiteral, BooleanLiteral, StringLiteral
 
 from typing import Callable, Optional
@@ -42,6 +43,7 @@ PRECEDENCES: dict[TokenType, PrecedenceType] = {
     TokenType.LPAREN: PrecedenceType.P_CALL,
     TokenType.PIPE: PrecedenceType.P_CALL,
     TokenType.DOT: PrecedenceType.P_CALL, # TODO: decide
+    TokenType.DOUBLE_COLON: PrecedenceType.P_CALL, # TODO: decide
 }
 
 class Parser:
@@ -82,6 +84,7 @@ class Parser:
             TokenType.LPAREN: self.__parse_call_expression, # pyright: ignore[reportAttributeAccessIssue]
             TokenType.PIPE: self.__parse_pipe_call_expression,
             TokenType.DOT: self.__parse_field_access_expression,
+            TokenType.DOUBLE_COLON: self.__parse_enum_variant_access_expression,
         }
     
     # region Parser Helpers
@@ -283,7 +286,6 @@ class Parser:
 
         return params
 
-
     def __parse_return_statement(self) -> Optional[ReturnStatement]:
         self.__next_token()
         stmt_return_value = self.__parse_expression(PrecedenceType.P_LOWEST)
@@ -423,7 +425,7 @@ class Parser:
 
     def __parse_enum_statement(self) -> EnumStatement:
         self.__expect_peek(TokenType.IDENT)
-        name = self.current_token.literal
+        name = IdentifierLiteral(self.current_token.literal)
 
         self.__expect_peek(TokenType.LBRACE)
 
@@ -698,6 +700,13 @@ class Parser:
         self.__next_token()  
         field_ident = IdentifierLiteral(self.current_token.literal)
         return FieldAccessExpression(lhs, field_ident)
+    
+    def __parse_enum_variant_access_expression(self, lhs: Expression) -> EnumVariantAccessExpression:
+        if not isinstance(lhs, IdentifierLiteral):
+            raise ValueError
+        self.__expect_peek(TokenType.IDENT)
+        field_ident = IdentifierLiteral(self.current_token.literal)
+        return EnumVariantAccessExpression(lhs, field_ident)
 
     # endregion
 

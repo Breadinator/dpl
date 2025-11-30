@@ -29,7 +29,7 @@ def main(path: str, lexer_debug: bool):
     try:
         program = p.parse_program()
     except Exception as e:
-        print(e)
+        print(repr(e))
         exit(1)
     finally:
         if len(p.errors) > 0:

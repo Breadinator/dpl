@@ -27,6 +27,7 @@ class NodeType(Enum):
     PrefixExpression = "PrefixExpression"
     NewStructExpression = "NewStructExpression"
     FieldAccessExpression = "FieldAccessExpression"
+    EnumVariantAccessExpression = "EnumVariantAccessExpression"
 
     # Literals
     I32Literal = "I32Literal"
@@ -268,7 +269,7 @@ class EnumStatement(Statement):
     def json(self) -> dict[str, Any]:
         return {
             "type": self.type().value,
-            "name": self.name,
+            "name": self.name.json(),
             "variants": [variant.json() for variant in self.variants]
         }
 # endregion
@@ -390,6 +391,21 @@ class FieldAccessExpression(Expression):
             "type": self.type().value,
             "base": self.base.json(),
             "field": self.field.json(),
+        }
+    
+class EnumVariantAccessExpression(Expression):
+    def __init__(self, name: 'IdentifierLiteral', variant: 'IdentifierLiteral') -> None:
+        self.name = name
+        self.variant = variant
+    
+    def type(self) -> NodeType:
+        return NodeType.EnumVariantAccessExpression
+    
+    def json(self) -> dict[str, Any]:
+        return {
+            "type": self.type().value,
+            "name": self.name.json(),
+            "variant": self.variant.json(),
         }
 # endregion
 

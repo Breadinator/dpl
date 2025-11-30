@@ -154,7 +154,12 @@ class Lexer:
             case '}':
                 tok = self.__new_token(TokenType.RBRACE, self.current_char)
             case ':':
-                tok = self.__new_token(TokenType.COLON, self.current_char)
+                if self.__peek_char() == ':':
+                    ch = self.current_char
+                    self.__read_char()
+                    tok = self.__new_token(TokenType.DOUBLE_COLON, ch + self.current_char)
+                else:
+                    tok = self.__new_token(TokenType.COLON, self.current_char)
             case ',':
                 tok = self.__new_token(TokenType.COMMA, self.current_char)
             case '"':

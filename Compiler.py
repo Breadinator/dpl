@@ -4,9 +4,10 @@ from typing import Optional
 from pathlib import Path
 
 from AST import Node, NodeType, Expression, Program
-from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement, StructStatement
+from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement
+from AST import StructStatement, EnumStatement
 from AST import WhileStatement, ForStatement, BreakStatement, ContinueStatement
-from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression, NewStructExpression, FieldAccessExpression
+from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression, NewStructExpression, FieldAccessExpression, EnumVariantAccessExpression
 from AST import I32Literal, F32Literal, IdentifierLiteral, BooleanLiteral, StringLiteral
 
 from Environment import Environment
@@ -99,6 +100,8 @@ class Compiler:
                 self.__visit_import_statement(node) # pyright: ignore[reportArgumentType]
             case NodeType.StructStatement:
                 self.__visit_struct_statement(node) # pyright: ignore[reportArgumentType]
+            case NodeType.EnumStatement:
+                self.__visit_enum_statement(node) # pyright: ignore[reportArgumentType]
 
             # Expressions
             case NodeType.InfixExpression:
@@ -279,7 +282,7 @@ class Compiler:
         self.compile(node.var_declaration)
 
         func = self.builder.function
-        cond_bb = func.append_basic_block(f"for_cond_{self.counter}")
+        cond_bb = func.append_basic_block(f"for_cond_{self.__increment_counter()}")
         body_bb = func.append_basic_block(f"for_body_{self.counter}")
         inc_bb = func.append_basic_block(f"for_inc_{self.counter}")
         end_bb = func.append_basic_block(f"for_end_{self.counter}")
@@ -351,6 +354,11 @@ class Compiler:
         field_type_names = [f[1] for f in node.fields]
 
         _llvm_struct = self.__define_struct(name, field_names, field_type_names)
+    
+    def __visit_enum_statement(self, node: EnumStatement) -> None:
+        name = node.name.value
+        variants = [variant.value for variant in node.variants]
+        self.env.define_enum(name, variants)
     # endregion
 
     # region Expressions
@@ -679,6 +687,14 @@ class Compiler:
         else:
             return self.builder.load(field_ptr), field_type
 
+    def __visit_enum_variant_access_expression(self, node: EnumVariantAccessExpression) -> tuple[ir.Value, ir.Type]:
+        enum_metadata = self.env.lookup_enum(node.name.value)
+        if enum_metadata is None:
+            raise LookupError(f"couldn't find enum with name `{node.name.value}`")
+        if node.variant.value not in enum_metadata.variants:
+            raise FieldMismatchError(f"enum `{node.name.value}` doesn't have variant `{node.variant.value}`")
+        idx = enum_metadata.variants.index(node.variant.value)
+        return ir.Constant(ir.IntType(32), idx), ir.IntType(32)
     # endregion
 
     # endregion
@@ -722,6 +738,8 @@ class Compiler:
                 return self.__visit_new_struct_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.FieldAccessExpression:
                 return self.__visit_field_access_expression(node) # pyright: ignore[reportArgumentType]
+            case NodeType.EnumVariantAccessExpression:
+                return self.__visit_enum_variant_access_expression(node)
             
             case default:
                 raise NotImplementedError(f"Not implemented: {default}")

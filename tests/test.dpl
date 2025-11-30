@@ -1,10 +1,10 @@
-import "math.dpl";
-
 fn main() -> i32 {
     enum Foo {
         Bar,
         Baz,
     }
+
+    let foo: Foo = Foo::Baz;
 
     0
 }
