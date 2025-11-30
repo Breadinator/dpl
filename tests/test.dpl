@@ -1,12 +1,4 @@
-struct Point {
-    x: i32;
-    y: i32;
-}
-
-struct Circle {
-    center: Point;
-    radius: i32;
-}
+import "math.dpl";
 
 fn main() -> i32 {
     let p: Point = new Point {
