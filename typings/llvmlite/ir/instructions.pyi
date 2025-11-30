@@ -267,7 +267,7 @@ class PhiInstr(Instruction):
     def descr(self, buf): # -> None:
         ...
     
-    def add_incoming(self, value: ir.Value, block: ir.Block): # -> None:
+    def add_incoming(self, value: ir.Value, block: ir.Block) -> None:
         ...
     
     def replace_usage(self, old, new): # -> None:

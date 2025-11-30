@@ -1,5 +1,5 @@
 from llvmlite import ir
-from typing import Optional, Sequence
+from typing import Optional
 
 from llvmlite.ir import instructions
 
@@ -106,7 +106,7 @@ class Compiler:
     def __visit_let_statement(self, node: LetStatement) -> None:
         name = node.name.value
         value = node.value
-        value_type = node.value_type # TODO: implement
+        _value_type = node.value_type # TODO: implement
 
         value, typ = self.__resolve_value(value)
         if value is None or typ is None:
@@ -212,7 +212,7 @@ class Compiler:
             return None
 
         value: Optional[ir.Instruction] = None
-        typ: ir.Type = None
+        typ: Optional[ir.Type] = None
         if isinstance(right_type, ir.IntType) and isinstance(left_type, ir.IntType):
             typ = self.type_map['i32']
             match operator:
@@ -339,12 +339,7 @@ class Compiler:
         # compile consequence and try to obtain value/type
         # If consequence is a block/expression that returns a value, use __resolve_value
         # otherwise compile it for side-effects (and treat as producing no value)
-        if isinstance(cons_node, Expression):
-            then_val, then_type = self.__resolve_value(cons_node)
-        else:
-            # statement-like consequence
-            self.compile(cons_node)  # pyright: ignore[reportArgumentType]
-            then_val, then_type = None, None
+        then_val, then_type = self.__resolve_value(cons_node)
 
         # If the then block is not terminated (no return/ret emitted), branch to merge.
         # Best-effort check for terminator: some llvmlite versions provide builder.block.terminator
@@ -361,11 +356,7 @@ class Compiler:
         else_val = None
         else_type = None
         if alt_node is not None:
-            if isinstance(alt_node, Expression):
-                else_val, else_type = self.__resolve_value(alt_node)
-            else:
-                self.compile(alt_node)  # pyright: ignore[reportArgumentType]
-                else_val, else_type = None, None
+            else_val, else_type = self.__resolve_value(alt_node)
         else:
             # no alternative: produce a default value matching the consequence type (if any)
             if then_type is None:
@@ -408,7 +399,7 @@ class Compiler:
             raise TypeError("Mismatched types in if branches: then %s vs else %s" % (then_type, else_type))
 
         # create phi node to select the branch result
-        phi = self.builder.phi(then_type)
+        phi = self.builder.phi(then_type) # pyright: ignore[reportArgumentType]
         # add incoming values. Use the block objects captured earlier
         if then_val is None:
             # if then had no value, use zero default
@@ -422,8 +413,8 @@ class Compiler:
             elif isinstance(else_type, ir.FloatType):
                 else_val = ir.Constant(else_type, 0.0)
 
-        phi.add_incoming(then_val, then_block)
-        phi.add_incoming(else_val, else_block)
+        phi.add_incoming(then_val, then_block) # pyright: ignore[reportArgumentType]
+        phi.add_incoming(else_val, else_block) # pyright: ignore[reportArgumentType]
 
         return phi, then_type
 
@@ -443,7 +434,7 @@ class Compiler:
         ret = None
         match name:
             case 'printf':
-                ret = self.builtin_printf(args, types[0])
+                ret = self.builtin_printf(args, types[0]) # pyright: ignore[reportArgumentType]
                 ret_type = self.type_map['i32']
             case _:
                 func, ret_type = self.env.lookup(name)
@@ -457,7 +448,7 @@ class Compiler:
     # endregion
 
     # region Helper Methods
-    def __resolve_value(self, node: Expression, value_type: Optional[str] = None) -> tuple[Optional[ir.Value], Optional[ir.Type]]:
+    def __resolve_value(self, node: Expression, value_type: Optional[str] = None) -> tuple[Optional[ir.Value], Optional[ir.Type]]: # pyright: ignore[reportRedeclaration]
         match node.type():
             case NodeType.I32Literal:
                 node: I32Literal = node # pyright: ignore[reportRedeclaration, reportAssignmentType]
