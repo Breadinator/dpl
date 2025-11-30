@@ -1,5 +1,5 @@
 # DPL
-The Dick-Cheney-Memorial Programming Language is a BLAZINGLY slow, staticly-typed, LLVM-backend shitlang.
+The Dick-Cheney-Memorial Programming Language is a BLAZINGLY slow, statically-typed, LLVM-backend shitlang.
 
 The Definitely-Worth-Using Programming Language is a toy project I started as a hobby.
 
