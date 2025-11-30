@@ -89,14 +89,14 @@ class ModuleRef(ffi.ObjectRef):
         ...
     
     @property
-    def triple(self): # -> str:
+    def triple(self) -> str:
         """
         This module's target "triple" specification, as a string.
         """
         ...
     
     @triple.setter
-    def triple(self, strrep): # -> None:
+    def triple(self, strrep: str) -> None:
         ...
     
     def link_in(self, other, preserve=...): # -> None:
