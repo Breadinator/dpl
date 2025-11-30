@@ -6,12 +6,18 @@ fn main() -> i32 {
 
     let foo: Foo = Foo::Baz;
 
-    match foo {
+    let msg: str = match foo {
         Foo::Bar => {
-            1
+            "hello"
         }
         Foo::Baz => {
-            0
+            "world"
         }
-    }
+    };
+    printf(msg);
+
+    let x: str = "foo";
+    printf(x);
+
+    0
 }

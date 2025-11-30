@@ -114,9 +114,11 @@ class Compiler:
                 self.__visit_call_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.FieldAccessExpression:
                 self.__visit_field_access_expression(node) # pyright: ignore[reportArgumentType]
+            case NodeType.MatchExpression:
+                self.__visit_match_expression(node) # pyright: ignore[reportArgumentType]
 
             case _:
-                raise NotImplementedError
+                raise NotImplementedError(node.type().name)
     
     # region Visit methods
     def __visit_program(self, node: Program) -> None:
@@ -706,7 +708,7 @@ class Compiler:
         counter = self.__increment_counter()
         fn = self.builder.function
 
-        blocks: list[tuple[int, ir.Block, ir.Value]] = []
+        blocks: list[tuple[int, ir.Block, ir.Value, ir.Type]] = []
 
         prev_block = self.builder.block
 
@@ -724,26 +726,29 @@ class Compiler:
             result, result_ty = self.__visit_block_expression(block_expression)
             if result is None:
                 result = ir.Constant(ir.IntType(32), 0)
-            blocks.append((variant_value, block, result))
+            if result_ty is None:
+                result_ty = ir.IntType(32)
+            blocks.append((variant_value, block, result, result_ty))
 
         end = fn.append_basic_block(f"switch_{counter}_end")
 
         self.builder.position_at_end(prev_block)
         switch = self.builder.switch(value, end)
-        for variant_value, block, _ in blocks:
+        for variant_value, block, _, _ in blocks:
             switch.add_case(ir.Constant(ir.IntType(32), variant_value), block)
 
-        for _, block, _ in blocks:
+        for _, block, _, _ in blocks:
             self.builder.position_at_end(block)
             if not self.builder.block.is_terminated:
                 self.builder.branch(end)
 
         self.builder.position_at_start(end)
-        phi = self.builder.phi(ir.IntType(32))
-        for _, block, result in blocks:
+        ty = blocks[0][3]
+        phi = self.builder.phi(ty)
+        for _, block, result, _ in blocks:
             phi.add_incoming(result, block)
-        phi.add_incoming(ir.Constant(ir.IntType(32), 0), prev_block)
-        return phi, ir.IntType(32)
+        phi.add_incoming(ir.Constant(ty, ir.Undefined), prev_block)
+        return phi, ty
 
 
     # endregion
@@ -808,43 +813,34 @@ class Compiler:
         return global_fmt, global_fmt.type
 
     def builtin_printf(self, params: list[ir.Value], return_type: ir.Type) -> Optional[instructions.CallInstr]:
-        """ Basic C builtin printf: expects first param to be a pointer/GlobalVariable to the format. """
         func, _ = self.env.lookup('printf')
-        if func is None:
-            return None
-
-        if len(params) == 0:
+        if func is None or len(params) == 0:
             return None
 
         fmt_val = params[0]
         rest_params = params[1:]
 
-        # If the argument is a LoadInstr from a global, extract the global pointer.
-        # Example: load i8*, i8** @someglobal  -> we want @someglobal
+        # If global string, bitcast [N x i8]* to i8*
+        if isinstance(fmt_val, ir.GlobalVariable):
+            fmt_arg = self.builder.bitcast(fmt_val, ir.IntType(8).as_pointer())
+            return self.builder.call(func, [fmt_arg, *rest_params])
+
+        # If already pointer type, bitcast to i8* just in case
+        if isinstance(fmt_val.type, ir.PointerType):
+            fmt_arg = self.builder.bitcast(fmt_val, ir.IntType(8).as_pointer())
+            return self.builder.call(func, [fmt_arg, *rest_params])
+
+        # If it's a load instruction from a global
         if isinstance(fmt_val, instructions.LoadInstr):
-            # load has operands; the first operand is the pointer loaded from
             operand0 = fmt_val.operands[0]
-            # bitcast the loaded value (which may already be i8*) to i8*
             fmt_arg = self.builder.bitcast(operand0, ir.IntType(8).as_pointer())
             return self.builder.call(func, [fmt_arg, *rest_params])
 
-        # If the argument is a GlobalVariable (created by __convert_string), bitcast it to i8*.
-        # NOTE: GlobalVariable is a subclass of Value in llvmlite; check by attribute
-        if hasattr(fmt_val, "initializer") and isinstance(fmt_val, ir.GlobalVariable):
-            fmt_arg = self.builder.bitcast(fmt_val, ir.IntType(8).as_pointer())
-            return self.builder.call(func, [fmt_arg, *rest_params])
-
-        # If it's already a pointer (like an i8*), use as-is
-        if hasattr(fmt_val, "type") and isinstance(fmt_val.type, ir.PointerType):
-            fmt_arg = self.builder.bitcast(fmt_val, ir.IntType(8).as_pointer())
-            return self.builder.call(func, [fmt_arg, *rest_params])
-
-        # Last-resort: if it's some constant global index or something else, try to coerce.
+        # Fallback: try to bitcast
         try:
             fmt_arg = self.builder.bitcast(fmt_val, ir.IntType(8).as_pointer())
             return self.builder.call(func, [fmt_arg, *rest_params])
         except Exception:
-            # couldn't transform the value into a format pointer; bail gracefully
             return None
 
     def __extract_ret(self, node: BlockExpression):
