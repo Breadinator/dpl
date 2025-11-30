@@ -9,8 +9,9 @@ import llvmlite.binding as llvm
 from Lexer import Lexer
 from Parser import Parser
 from Compiler import Compiler
+from TypeChecker import TypeChecker
 
-def main(path: str, lexer_debug: bool):
+def main(path: str, lexer_debug: bool, check: bool):
     abs_path = Path(path).absolute()
     dir = abs_path.parent
 
@@ -36,6 +37,12 @@ def main(path: str, lexer_debug: bool):
             for err in p.errors:
                 print(err)
             exit(1)
+    logging.info("program parsed")
+    
+    if check:
+        TypeChecker(dir).type_check(program)
+        logging.info("no type errors detected")
+        exit(0)
 
     os.makedirs("./build", exist_ok=True)
     with open("build/ast.json", "w") as f:
@@ -43,6 +50,7 @@ def main(path: str, lexer_debug: bool):
 
     c = Compiler(dir)
     c.compile(program)
+    logging.info("program compiled")
 
     # Output steps
     module = c.module
@@ -61,22 +69,25 @@ def setup_logger():
         format="[%(levelname)s] %(asctime)s - %(message)s"
     )
 
-def parse_args(args: list[str]) -> tuple[str, bool]:
+def parse_args(args: list[str]) -> tuple[str, bool, bool]:
     path = None
     lexer_debug = False
+    check = False
 
     for arg in args:
         if arg == "--lexer_debug":
             lexer_debug = True
+        if arg == "--check":
+            check = True
         else:
             path = arg
 
     if path is None:
         logging.error("Requires path")
         exit(1)
-    return path, lexer_debug
+    return path, lexer_debug, check
 
 if __name__ == '__main__':
     setup_logger()
-    path, lexer_debug = parse_args(sys.argv[1:])
-    main(path, lexer_debug)
+    path, lexer_debug, check = parse_args(sys.argv[1:])
+    main(path, lexer_debug, check)
