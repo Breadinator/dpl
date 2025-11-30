@@ -22,6 +22,10 @@ class TokenType(Enum):
 
     # Assignment
     EQ = "EQ"
+    PLUS_EQ = "PLUS_EQ"
+    MINUS_EQ = "MINUS_EQ"
+    MUL_EQ = "MUL_EQ"
+    DIV_EQ = "DIV_EQ"
 
     # Comp symbols
     LT = '<'
@@ -43,6 +47,9 @@ class TokenType(Enum):
     RBRACE = "RBRACE"
     PIPE = "PIPE"
 
+    # Prefix symbols
+    BANG = "BANG"
+
     # Keywords
     LET = "LET"
     FN = "FN"
@@ -52,6 +59,9 @@ class TokenType(Enum):
     TRUE = "TRUE"
     FALSE = "FALSE"
     WHILE = "WHILE"
+    FOR = "FOR"
+    CONTINUE = "CONTINUE"
+    BREAK = "BREAK"
 
     # Typing
     TYPE = "TYPE"
@@ -77,7 +87,10 @@ KEYWORDS: dict[str, TokenType] = {
     "else": TokenType.ELSE,
     "True": TokenType.TRUE,
     "False": TokenType.FALSE,
-    "while": TokenType.WHILE
+    "while": TokenType.WHILE,
+    "for": TokenType.FOR,
+    "continue": TokenType.CONTINUE,
+    "break": TokenType.BREAK,
 }
 
 TYPE_KEYWORDS: list[str] = ["i32", "f32", "str", "void"]

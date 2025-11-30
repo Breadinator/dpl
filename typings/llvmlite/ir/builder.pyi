@@ -301,14 +301,14 @@ class IRBuilder:
         """
         ...
     
-    def not_(self, value, name=...): # -> None:
+    def not_(self, value: ir.Value, name=...) -> instructions.Instruction: # -> None:
         """
         Bitwise integer complement:
             name = ~value
         """
         ...
     
-    def neg(self, value, name=...): # -> None:
+    def neg(self, value: ir.Value, name=...) -> instructions.Instruction: # -> None:
         """
         Integer negative:
             name = -value
@@ -447,7 +447,7 @@ class IRBuilder:
         ...
     
     @_castop('sitofp')
-    def sitofp(self, value, typ, name=...): # -> None:
+    def sitofp(self, value: ir.Value, typ: ir.Type, name=...) -> ir.Value:
         """
         Convert signed integer to floating-point:
             name = (typ) value

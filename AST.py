@@ -12,12 +12,16 @@ class NodeType(Enum):
     ReturnStatement = "ReturnStatement"
     AssignStatement = "AssignStatement"
     WhileStatement = "WhileStatement"
+    ForStatement = "ForStatement"
+    ContinueStatement = "ContinueStatement"
+    BreakStatement = "BreakStatement"
 
     # Expressions
     InfixExpression = "InfixExpression"
     BlockExpression = "BlockExpression"
     IfExpression = "IfExpression"
     CallExpression = "CallExpression"
+    PrefixExpression = "PrefixExpression"
 
     # Literals
     I32Literal = "I32Literal"
@@ -144,9 +148,10 @@ class FunctionStatement(Statement):
         }
 
 class AssignStatement(Statement):
-    def __init__(self, ident: 'IdentifierLiteral', rh: Expression) -> None:
+    def __init__(self, ident: 'IdentifierLiteral', rh: Expression, operator: str = "") -> None:
         self.ident = ident
         self.rh = rh
+        self.operator = operator
     
     def type(self) -> NodeType:
         return NodeType.AssignStatement
@@ -156,6 +161,7 @@ class AssignStatement(Statement):
             "type": self.type().value,
             "ident": self.ident.json(),
             "rh": self.rh.json(),
+            "operator": self.operator,
         }
     
 class WhileStatement(Statement):
@@ -170,6 +176,51 @@ class WhileStatement(Statement):
         return {
             "type": self.type().value,
             "condition": self.condition.json(),
+            "body": self.body.json(),
+        }
+
+class BreakStatement(Statement):
+    def __init__(self) -> None:
+        pass
+
+    def type(self) -> NodeType:
+        return NodeType.BreakStatement
+    
+    def json(self) -> dict[str, Any]:
+        return { "type": self.type().value }
+
+class ContinueStatement(Statement):
+    def __init__(self) -> None:
+        pass
+
+    def type(self) -> NodeType:
+        return NodeType.ContinueStatement
+    
+    def json(self) -> dict[str, Any]:
+        return { "type": self.type().value }
+    
+class ForStatement(Statement):
+    def __init__(
+        self,
+        var_declaration: LetStatement,
+        condition: Expression,
+        action: AssignStatement,
+        body: 'BlockExpression',
+    ) -> None:
+        self.var_declaration = var_declaration
+        self.condition = condition
+        self.action = action
+        self.body = body
+
+    def type(self) -> NodeType:
+        return NodeType.ForStatement
+    
+    def json(self) -> dict[str, Any]:
+        return {
+            "type": self.type().value,
+            "var_declaration": self.var_declaration.json(),
+            "condition": self.condition.json(),
+            "action": self.action.json(),
             "body": self.body.json(),
         }
 # endregion
@@ -243,6 +294,21 @@ class CallExpression(Expression):
             "function": self.function.json(),
             "args": [arg.json() for arg in self.args]
         } 
+    
+class PrefixExpression(Expression):
+    def __init__(self, operator: str, right_node: Expression) -> None:
+        self.operator = operator
+        self.right_node = right_node
+
+    def type(self) -> NodeType:
+        return NodeType.PrefixExpression
+    
+    def json(self) -> dict[str, Any]:
+        return {
+            "type": self.type().value,
+            "operator": self.operator,
+            "right_node": self.right_node.json()
+        }
 # endregion
 
 # region Literals

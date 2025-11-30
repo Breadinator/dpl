@@ -3,10 +3,9 @@ from typing import Optional
 
 from llvmlite.ir import instructions
 
-from AST import Node, NodeType, Statement, Expression, Program
-from AST import FunctionParameter
-from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, WhileStatement
-from AST import InfixExpression, BlockExpression, IfExpression, CallExpression
+from AST import Node, NodeType, Expression, Program
+from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, WhileStatement, ForStatement, BreakStatement, ContinueStatement
+from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression
 from AST import I32Literal, F32Literal, IdentifierLiteral, BooleanLiteral, StringLiteral
 
 from Environment import Environment
@@ -31,6 +30,9 @@ class Compiler:
         self.errors: list[str] = []
 
         self.__initialize_builtins()
+
+        self.breakpoints: list[ir.Block] = []
+        self.continues: list[ir.Block] = []
 
     def __initialize_builtins(self) -> None:
         def define_bools():
@@ -80,6 +82,12 @@ class Compiler:
                 self.__visit_assign_statement(node) # pyright: ignore[reportArgumentType]
             case NodeType.WhileStatement:
                 self.__visit_while_statement(node) # pyright: ignore[reportArgumentType]
+            case NodeType.ForStatement:
+                self.__visit_for_statement(node) # pyright: ignore[reportArgumentType]
+            case NodeType.BreakStatement:
+                self.__visit_break_statement(node) # pyright: ignore[reportArgumentType]
+            case NodeType.ContinueStatement:
+                self.__visit_continue_statement(node) # pyright: ignore[reportArgumentType]
 
             # Expressions
             case NodeType.InfixExpression:
@@ -171,16 +179,55 @@ class Compiler:
     def __visit_assign_statement(self, node: AssignStatement) -> None:
         name = node.ident.value
         value = node.rh
+        operator = node.operator
 
-        value, _typ = self.__resolve_value(value)
-        if value is None:
+        var_ptr, _ = self.env.lookup(name)
+        if var_ptr is None:
+            self.errors.append(f"identifier `{name}` reassigned before declaration")
             return
-
+ 
+        right_value, right_type = self.__resolve_value(value)
+        if right_value is None:
+            return       
+        
+        orig_value = self.builder.load(var_ptr)
+        if isinstance(orig_value.type, ir.IntType) and isinstance(right_type, ir.FloatType):
+            orig_value = self.builder.sitofp(orig_value, ir.FloatType())
+        
+        if isinstance(orig_value.type, ir.FloatType) and isinstance(right_type, ir.IntType):
+            orig_value = self.builder.sitofp(right_value, ir.FloatType())
+        
+        value = None
+        match operator:
+            case '=':
+                value = right_value
+            case '+=':
+                if isinstance(orig_value.type, ir.IntType) and isinstance(right_type, ir.IntType):
+                    value = self.builder.add(orig_value, right_value)
+                else:
+                    value = self.builder.fadd(orig_value, right_value)
+            case '-=':
+                if isinstance(orig_value.type, ir.IntType) and isinstance(right_type, ir.IntType):
+                    value = self.builder.sub(orig_value, right_value)
+                else:
+                    value = self.builder.fsub(orig_value, right_value)
+            case '*=':
+                if isinstance(orig_value.type, ir.IntType) and isinstance(right_type, ir.IntType):
+                    value = self.builder.mul(orig_value, right_value)
+                else:
+                    value = self.builder.fmul(orig_value, right_value)
+            case '/=':
+                if isinstance(orig_value.type, ir.IntType) and isinstance(right_type, ir.IntType):
+                    value = self.builder.sdiv(orig_value, right_value)
+                else:
+                    value = self.builder.fdiv(orig_value, right_value)
+            case _:
+                raise ValueError("Unsupported assignment operator")
+        
         ptr, _ = self.env.lookup(name)
         if ptr is None:
-            self.errors.append(f"identifier `{name}` reassigned before declaration")
-        else:
-            self.builder.store(value, ptr)
+            return None
+        self.builder.store(value, ptr)
 
     def __visit_while_statement(self, node: WhileStatement) -> None:
         test, _ = self.__resolve_value(node.condition)
@@ -198,6 +245,39 @@ class Compiler:
             return None
         self.builder.cbranch(test, while_loop_entry, while_loop_otherwise)
         self.builder.position_at_start(while_loop_otherwise)
+
+    def __visit_for_statement(self, node: ForStatement) -> None:
+        prev_env = self.env
+        self.env = Environment(parent=prev_env)
+
+        self.compile(node.var_declaration)
+
+        for_loop_entry = self.builder.append_basic_block(f"for_loop_entry_{self.__increment_counter()}")
+        for_loop_otherwise = self.builder.append_basic_block(f"for_loop_otherwise{self.counter}")
+
+        self.breakpoints.append(for_loop_otherwise)
+        self.continues.append(for_loop_entry)
+
+        self.builder.branch(for_loop_entry)
+        self.builder.position_at_start(for_loop_entry)
+
+        self.compile(node.body)
+        self.compile(node.action)
+
+        test, _ = self.__resolve_value(node.condition)
+        if test is None:
+            return None
+        self.builder.cbranch(test, for_loop_entry, for_loop_otherwise)
+        self.builder.position_at_start(for_loop_otherwise)
+        
+        self.breakpoints.pop()
+        self.continues.pop()
+    
+    def __visit_break_statement(self, node: BreakStatement) -> None:
+        self.builder.branch(self.breakpoints[-1])
+    
+    def __visit_continue_statement(self, node: ContinueStatement) -> None:
+        self.builder.branch(self.continues[-1])
     # endregion
 
     # region Expressions
@@ -300,123 +380,94 @@ class Compiler:
             return ir.Constant(self.type_map["i32"], 0), self.type_map["i32"]
     
     def __visit_if_expression(self, node: IfExpression) -> tuple[Optional[ir.Value], Optional[ir.Type]]:
-        # node.condition, node.consequence, node.alternative
-        cond_node = node.condition
-        cons_node = node.consequence
-        alt_node = node.alternative
-
-        # Evaluate condition -> get LLVM value and its type
-        cond_val, cond_type = self.__resolve_value(cond_node)
+        cond_val, cond_type = self.__resolve_value(node.condition)
         if cond_val is None or cond_type is None:
             return None, None
 
-        # Convert condition to an i1 (boolean) if necessary
-        _i1 = ir.IntType(1)
-        if isinstance(cond_type, ir.IntType):
+        # normalize cond -> i1
+        if isinstance(cond_type, ir.IntType) and cond_type.width != 1:
             zero = ir.Constant(cond_type, 0)
             test = self.builder.icmp_signed('!=', cond_val, zero)
         elif isinstance(cond_type, ir.FloatType):
             zero = ir.Constant(cond_type, 0.0)
             test = self.builder.fcmp_ordered('!=', cond_val, zero)
-        elif isinstance(cond_type, ir.IntType) and cond_type.width == 1:
-            test = cond_val  # already i1
         else:
-            raise TypeError("Unsupported condition type for if expression")
+            test = cond_val
 
-        # Create blocks
         func = self.builder.function
         then_bb = func.append_basic_block("if.then")
-        else_bb = func.append_basic_block("if.else") if alt_node is not None else func.append_basic_block("if.else_tmp")
+        else_bb = func.append_basic_block("if.else")
         merge_bb = func.append_basic_block("if.end")
 
-        # Emit conditional branch
+        # conditional branch into then/else
         self.builder.cbranch(test, then_bb, else_bb)
 
         # --- then branch ---
         self.builder.position_at_end(then_bb)
-        then_val = None
-        then_type = None
-        # compile consequence and try to obtain value/type
-        # If consequence is a block/expression that returns a value, use __resolve_value
-        # otherwise compile it for side-effects (and treat as producing no value)
-        then_val, then_type = self.__resolve_value(cons_node)
-
-        # If the then block is not terminated (no return/ret emitted), branch to merge.
-        # Best-effort check for terminator: some llvmlite versions provide builder.block.terminator
-        term = getattr(self.builder.block, "terminator", None)
-        if term is None:
-            # no terminator -> add branch to merge
+        then_val, then_type = self.__resolve_value(node.consequence)
+        # If we didn't already terminate the block, branch to merge
+        then_branches_to_merge = False
+        if getattr(self.builder.block, "terminator", None) is None:
             self.builder.branch(merge_bb)
-
-        # capture the block object for phi incoming
-        then_block = self.builder.block
+            then_branches_to_merge = True
+        then_block_for_phi = self.builder.block if then_branches_to_merge else None
 
         # --- else branch ---
         self.builder.position_at_end(else_bb)
-        else_val = None
-        else_type = None
-        if alt_node is not None:
-            else_val, else_type = self.__resolve_value(alt_node)
+        if node.alternative is not None:
+            else_val, else_type = self.__resolve_value(node.alternative)
         else:
-            # no alternative: produce a default value matching the consequence type (if any)
-            if then_type is None:
-                # Nothing to return in either branch
-                else_val, else_type = None, None
-            else:
-                # default zero value for the type
-                if isinstance(then_type, ir.IntType):
-                    else_val = ir.Constant(then_type, 0)
-                    else_type = then_type
-                elif isinstance(then_type, ir.FloatType):
-                    else_val = ir.Constant(then_type, 0.0)
-                    else_type = then_type
-                else:
-                    raise TypeError("Unsupported branch result type for default else")
+            else_val, else_type = None, None
 
-        # If else block is not terminated, branch to merge
-        term = getattr(self.builder.block, "terminator", None)
-        if term is None:
+        else_branches_to_merge = False
+        if getattr(self.builder.block, "terminator", None) is None:
             self.builder.branch(merge_bb)
-
-        else_block = self.builder.block
+            else_branches_to_merge = True
+        else_block_for_phi = self.builder.block if else_branches_to_merge else None
 
         # --- merge block ---
         self.builder.position_at_end(merge_bb)
 
-        # If both branches produced no value, the if-expression yields no value.
-        if then_type is None and else_type is None:
+        # If both branches produced no value, the if expression yields no value:
+        if (then_type is None) and (else_type is None):
             return None, None
 
-        # If one branch had None but the other had a type, try to use the other's type as result:
-        # (we already created default else for missing alt, so mismatch should be rare)
+        # Normalize types and defaults (your existing logic)
         if then_type is None and else_type is not None:
             then_type = else_type
         if else_type is None and then_type is not None:
             else_type = then_type
 
-        # ensure the branch result types match
         if type(then_type) is not type(else_type):
-            raise TypeError("Mismatched types in if branches: then %s vs else %s" % (then_type, else_type))
+            raise TypeError("Mismatched types in if branches")
 
-        # create phi node to select the branch result
+        # If no branch actually branched to merge, nothing to phi — return default/None
+        incoming_blocks: list[ir.Block] = []
+        incoming_values: list[ir.Value] = []
+
+        if then_block_for_phi is not None:
+            if then_val is None:
+                then_val = ir.Constant(then_type, 0 if isinstance(then_type, ir.IntType) else 0.0)
+            incoming_blocks.append(then_block_for_phi)
+            incoming_values.append(then_val)
+
+        if else_block_for_phi is not None:
+            if else_val is None:
+                else_val = ir.Constant(else_type, 0 if isinstance(else_type, ir.IntType) else 0.0)
+            incoming_blocks.append(else_block_for_phi)
+            incoming_values.append(else_val)
+
+        # If only one branch actually flows to merge, the result is the incoming value from that branch
+        if len(incoming_blocks) == 1:
+            return incoming_values[0], then_type
+
+        # Otherwise create a phi with exactly the same number of incoming entries as actual predecessors
         phi = self.builder.phi(then_type) # pyright: ignore[reportArgumentType]
-        # add incoming values. Use the block objects captured earlier
-        if then_val is None:
-            # if then had no value, use zero default
-            if isinstance(then_type, ir.IntType):
-                then_val = ir.Constant(then_type, 0)
-            elif isinstance(then_type, ir.FloatType):
-                then_val = ir.Constant(then_type, 0.0)
-        if else_val is None:
-            if isinstance(else_type, ir.IntType):
-                else_val = ir.Constant(else_type, 0)
-            elif isinstance(else_type, ir.FloatType):
-                else_val = ir.Constant(else_type, 0.0)
-
-        phi.add_incoming(then_val, then_block) # pyright: ignore[reportArgumentType]
-        phi.add_incoming(else_val, else_block) # pyright: ignore[reportArgumentType]
+        for val, blk in zip(incoming_values, incoming_blocks):
+            phi.add_incoming(val, blk)
 
         return phi, then_type
+
 
     def __visit_call_expression(self, node: CallExpression) -> tuple[Optional[ir.Instruction], Optional[ir.Type]]:
         name = node.function.value
@@ -443,6 +494,35 @@ class Compiler:
                 ret = self.builder.call(func, args)
         
         return ret, ret_type
+    
+    def __visit_prefix_expression(self, node: PrefixExpression) -> tuple[Optional[ir.Value], Optional[ir.Type]]:
+        right_value, right_type = self.__resolve_value(node.right_node)
+        if right_value is None or right_type is None:
+            return None, None
+
+        typ = None
+        value = None
+
+        if isinstance(right_type, ir.FloatType):
+            typ = ir.FloatType()
+            match node.operator:
+                case '-':
+                    value = self.builder.fmul(right_value, ir.Constant(ir.FloatType(), -1.0))
+                case '!':
+                    value = ir.Constant(ir.IntType(1), 0)
+                case _:
+                    raise ValueError(f"invalid operator {node.operator}")
+        elif isinstance(right_type, ir.IntType):
+            typ = ir.IntType(32)
+            match node.operator:
+                case '-':
+                    value = self.builder.mul(right_value, ir.Constant(ir.IntType(32), -1))
+                case '!':
+                    value = self.builder.not_(right_value)
+                case _:
+                    raise ValueError(f"invalid operator {node.operator}")
+        
+        return value, typ
     # endregion
 
     # endregion
@@ -480,6 +560,8 @@ class Compiler:
                 return self.__visit_if_expression(node) # type: ignore
             case NodeType.CallExpression:
                 return self.__visit_call_expression(node) # type: ignore
+            case NodeType.PrefixExpression:
+                return self.__visit_prefix_expression(node) # pyright: ignore[reportArgumentType]
             
             case default:
                 raise NotImplementedError(f"Not implemented: {default}")
@@ -494,33 +576,45 @@ class Compiler:
         global_fmt.initializer = c_fmt
         return global_fmt, global_fmt.type
 
-    def builtin_printf(self, params: list[ir.Instruction], return_type: ir.Type) -> Optional[instructions.CallInstr]:
-        """ Basic C builtin printf """
+    def builtin_printf(self, params: list[ir.Value], return_type: ir.Type) -> Optional[instructions.CallInstr]:
+        """ Basic C builtin printf: expects first param to be a pointer/GlobalVariable to the format. """
         func, _ = self.env.lookup('printf')
         if func is None:
-            return 
+            return None
 
-        c_str = self.builder.alloca(return_type)
-        self.builder.store(params[0], c_str)
+        if len(params) == 0:
+            return None
 
+        fmt_val = params[0]
         rest_params = params[1:]
 
-        if isinstance(params[0], ir.LoadInstr):
-            """ Printing from a variable load instruction """
-            # let a: str = "yeet";
-            # print(a)
-            c_fmt: ir.LoadInstr = params[0]
-            g_var_ptr = c_fmt.operands[0]
-            string_val = self.builder.load(g_var_ptr)
-            fmt_arg = self.builder.bitcast(string_val, ir.IntType(8).as_pointer())
+        # If the argument is a LoadInstr from a global, extract the global pointer.
+        # Example: load i8*, i8** @someglobal  -> we want @someglobal
+        if isinstance(fmt_val, instructions.LoadInstr):
+            # load has operands; the first operand is the pointer loaded from
+            operand0 = fmt_val.operands[0]
+            # bitcast the loaded value (which may already be i8*) to i8*
+            fmt_arg = self.builder.bitcast(operand0, ir.IntType(8).as_pointer())
             return self.builder.call(func, [fmt_arg, *rest_params])
-        else:
-            """ Printing from a normal string declared within printf """
-            # print("yeet %i", 23)
-            # TODO: HANDLE PRINTING FLOATS
-            fmt_arg = self.builder.bitcast(self.module.get_global(f"__str_{self.counter}"), ir.IntType(8).as_pointer())
 
+        # If the argument is a GlobalVariable (created by __convert_string), bitcast it to i8*.
+        # NOTE: GlobalVariable is a subclass of Value in llvmlite; check by attribute
+        if hasattr(fmt_val, "initializer") and isinstance(fmt_val, ir.GlobalVariable):
+            fmt_arg = self.builder.bitcast(fmt_val, ir.IntType(8).as_pointer())
             return self.builder.call(func, [fmt_arg, *rest_params])
+
+        # If it's already a pointer (like an i8*), use as-is
+        if hasattr(fmt_val, "type") and isinstance(fmt_val.type, ir.PointerType):
+            fmt_arg = self.builder.bitcast(fmt_val, ir.IntType(8).as_pointer())
+            return self.builder.call(func, [fmt_arg, *rest_params])
+
+        # Last-resort: if it's some constant global index or something else, try to coerce.
+        try:
+            fmt_arg = self.builder.bitcast(fmt_val, ir.IntType(8).as_pointer())
+            return self.builder.call(func, [fmt_arg, *rest_params])
+        except Exception:
+            # couldn't transform the value into a format pointer; bail gracefully
+            return None
 
     def __extract_ret(self, node: BlockExpression):
         if node.return_expression is not None:
