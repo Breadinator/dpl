@@ -578,7 +578,7 @@ class IRBuilder:
     def invoke(self, fn, args, normal_to, unwind_to, name=..., cconv=..., fastmath=..., attrs=..., arg_attrs=...): # -> InvokeInstr:
         ...
     
-    def gep(self, ptr, indices, inbounds=..., name=..., source_etype=...): # -> GEPInstr:
+    def gep(self, ptr, indices, inbounds=..., name=..., source_etype=...) -> instructions.GEPInstr:
         """
         Compute effective address (getelementptr):
             name = getelementptr ptr, <indices...>

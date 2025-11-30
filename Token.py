@@ -46,6 +46,7 @@ class TokenType(Enum):
     LBRACE = "LBRACE"
     RBRACE = "RBRACE"
     PIPE = "PIPE"
+    DOT = "DOT"
 
     # Prefix symbols
     BANG = "BANG"
@@ -63,6 +64,8 @@ class TokenType(Enum):
     CONTINUE = "CONTINUE"
     BREAK = "BREAK"
     IMPORT = "IMPORT"
+    STRUCT = "STRUCT"
+    NEW = "NEW"
 
     # Typing
     TYPE = "TYPE"
@@ -93,6 +96,8 @@ KEYWORDS: dict[str, TokenType] = {
     "continue": TokenType.CONTINUE,
     "break": TokenType.BREAK,
     "import": TokenType.IMPORT,
+    "struct": TokenType.STRUCT,
+    "new": TokenType.NEW,
 }
 
 TYPE_KEYWORDS: list[str] = ["i32", "f32", "str", "void"]

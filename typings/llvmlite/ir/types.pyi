@@ -462,6 +462,8 @@ class IdentifiedStructType(BaseStructType):
 
     Do not use this directly.
     """
+    name: str
+
     null = ...
     def __init__(self, context, name, packed=...) -> None:
         """

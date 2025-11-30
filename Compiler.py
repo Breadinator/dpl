@@ -1,18 +1,18 @@
 from llvmlite import ir
 from llvmlite.ir import instructions
 from typing import Optional
-import os
 from pathlib import Path
 
 from AST import Node, NodeType, Expression, Program
-from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement
+from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement, StructStatement
 from AST import WhileStatement, ForStatement, BreakStatement, ContinueStatement
-from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression
+from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression, NewStructExpression, FieldAccessExpression
 from AST import I32Literal, F32Literal, IdentifierLiteral, BooleanLiteral, StringLiteral
 
 from Environment import Environment
 from Lexer import Lexer
 from Parser import Parser
+from Exceptions import *
 
 class Compiler:
     def __init__(self, dir: Path) -> None:
@@ -97,6 +97,8 @@ class Compiler:
                 self.__visit_continue_statement(node) # pyright: ignore[reportArgumentType]
             case NodeType.ImportStatement:
                 self.__visit_import_statement(node) # pyright: ignore[reportArgumentType]
+            case NodeType.StructStatement:
+                self.__visit_struct_statement(node) # pyright: ignore[reportArgumentType]
 
             # Expressions
             case NodeType.InfixExpression:
@@ -107,6 +109,8 @@ class Compiler:
                 self.__visit_if_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.CallExpression:
                 self.__visit_call_expression(node) # pyright: ignore[reportArgumentType]
+            case NodeType.FieldAccessExpression:
+                self.__visit_field_access_expression(node) # pyright: ignore[reportArgumentType]
 
             case _:
                 raise NotImplementedError
@@ -123,21 +127,33 @@ class Compiler:
     def __visit_let_statement(self, node: LetStatement) -> None:
         name = node.name.value
         value = node.value
-        _value_type = node.value_type # TODO: implement
+        _value_type = node.value_type  # TODO: implement
 
         value, typ = self.__resolve_value(value)
         if value is None or typ is None:
             return
 
-        if self.env.lookup(name)[0] is None:
-            ptr = self.builder.alloca(typ)
-            self.builder.store(value, ptr)
-            self.env.define(name, ptr, typ)
+        # If the variable does not exist yet
+        existing_ptr, _ = self.env.lookup(name)
+        if existing_ptr is None:
+            # If `typ` is already a pointer (like from `new Struct`), allocate pointer-to-pointer
+            if isinstance(typ, ir.PointerType):
+                ptr = self.builder.alloca(typ)
+                self.builder.store(value, ptr)
+                self.env.define(name, ptr, typ)
+            else:
+                # Standard value type
+                ptr = self.builder.alloca(typ)
+                self.builder.store(value, ptr)
+                self.env.define(name, ptr, typ)
         else:
-            ptr, _ = self.env.lookup(name)
-            if ptr is None:
-                return
+            # Variable already exists, just store new value
+            ptr = existing_ptr
+            # If value is a pointer but the stored type is a struct, store the dereferenced value
+            if isinstance(value.type, ir.PointerType) and isinstance(ptr.type.pointee, ir.LiteralStructType):
+                value = self.builder.load(value)
             self.builder.store(value, ptr)
+
 
     def __visit_return_statement(self, node: ReturnStatement) -> None:
         value = node.return_value
@@ -323,6 +339,18 @@ class Compiler:
             exit(1)
         self.compile(program)
         self.global_parsed_modules[node.path] = program
+    
+    def __visit_struct_statement(self, node: StructStatement) -> None:
+        name = node.ident.value
+        existing_struct, _, _ = self.env.lookup_struct(name)
+        if existing_struct is not None:
+            self.errors.append(f"struct `{name}` already defined")
+            return
+        
+        field_names = [f[0] for f in node.fields]
+        field_type_names = [f[1] for f in node.fields]
+
+        _llvm_struct = self.__define_struct(name, field_names, field_type_names)
     # endregion
 
     # region Expressions
@@ -568,6 +596,78 @@ class Compiler:
                     raise ValueError(f"invalid operator {node.operator}")
         
         return value, typ
+
+    def __visit_new_struct_expression(self, node: NewStructExpression) -> tuple[ir.Value, ir.Type]:
+        name = node.struct_ident.value
+        field_names = [field[0].value for field in node.fields]
+        field_exprs = [field[1] for field in node.fields]
+
+        # Lookup struct definition
+        struct_type, expected_field_names, expected_field_types = self.env.lookup_struct(name)
+        if struct_type is None or expected_field_names is None or expected_field_types is None:
+            raise LookupError(f"struct `{name}` not defined")
+
+        # Allocate memory for the struct
+        ptr = self.builder.alloca(struct_type)
+
+        # Check field names match
+        if set(field_names) != set(expected_field_names):
+            raise FieldMismatchError(f"struct `{name}` missing or extra fields")
+
+        # Resolve all field expressions
+        field_values = [self.__resolve_value(expr) for expr in field_exprs]
+
+        # Store each field
+        for i, (value, typ) in enumerate(field_values):
+            if value is None or typ is None:
+                raise ValueResolverError(f"couldn't resolve field {field_names[i]} on struct `{name}`")
+            
+            expected_type = expected_field_types[i]
+            
+            # If the expected type is a struct and value is a pointer (from alloca), load it
+            if isinstance(expected_type, (ir.IdentifiedStructType, ir.LiteralStructType)):
+                if isinstance(typ, ir.PointerType) and typ.pointee == expected_type:
+                    value = self.builder.load(value)
+                    typ = expected_type
+
+            # Type check
+            if typ != expected_type:
+                raise TypeMismatchError(f"field {field_names[i]} on struct `{name}` resolved as wrong type")
+
+            # Get pointer to the field
+            field_ptr = self.builder.gep(ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), i)])
+            # Store the value into the struct
+            self.builder.store(value, field_ptr)
+
+        return ptr, ptr.type
+
+    def __visit_field_access_expression(self, node: FieldAccessExpression) -> tuple[ir.Value, ir.Type]:
+        field_name = node.field.value
+        value, typ = self.__resolve_value(node.base)
+        if value is None or typ is None:
+            raise ValueResolverError
+        
+        if self.__is_pointer_to_struct(typ):
+            typ = typ.pointee
+
+        if not isinstance(typ, ir.IdentifiedStructType):
+            raise TypeMismatchError(f"field access can only be performed on a struct, tried to perform on {typ}")
+
+        name = typ.name
+        expected_type, fields, field_types = self.env.lookup_struct(name)
+        if expected_type is None or fields is None or field_types is None:
+            raise LookupError(f"struct {name} doesn't exist")
+        if typ != expected_type:
+            raise TypeMismatchError(f"got {typ}, expected {expected_type}")
+        if field_name not in fields:
+            raise FieldMismatchError(f"{field_name} not in struct `{name}`")
+        field_index = fields.index(field_name)
+        
+        field_ptr = self.builder.gep(value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), field_index)])
+        field_type = field_types[field_index]
+        field_value = self.builder.load(field_ptr)
+
+        return field_value, field_type
     # endregion
 
     # endregion
@@ -607,6 +707,10 @@ class Compiler:
                 return self.__visit_call_expression(node) # type: ignore
             case NodeType.PrefixExpression:
                 return self.__visit_prefix_expression(node) # pyright: ignore[reportArgumentType]
+            case NodeType.NewStructExpression:
+                return self.__visit_new_struct_expression(node) # pyright: ignore[reportArgumentType]
+            case NodeType.FieldAccessExpression:
+                return self.__visit_field_access_expression(node) # pyright: ignore[reportArgumentType]
             
             case default:
                 raise NotImplementedError(f"Not implemented: {default}")
@@ -665,4 +769,45 @@ class Compiler:
         if node.return_expression is not None:
             node.statements.append(ReturnStatement(node.return_expression))
             node.return_expression = None
+    
+    def __resolve_type(self, name: str) -> Optional[ir.Type]:
+        if name in self.type_map:
+            return self.type_map[name]
+        if name in self.env.structs:
+            struct, _, _ = self.env.lookup_struct(name)
+            return struct
+        else:
+            return None
+
+    def __define_struct(
+        self, name: str, field_names: list[str], field_type_names: list[str]
+    ) -> ir.IdentifiedStructType:
+        # Create an opaque struct first (needed for recursive types)
+        identified = ir.global_context.get_identified_type(name)
+        
+        # Register struct early in environment
+        self.env.define_struct(name, identified, field_names, None)
+
+        resolved_types: list[ir.Type] = []
+        for tname in field_type_names:
+            typ = self.__resolve_type(tname)
+            if typ is None:
+                raise TypeError(f"unknown field type '{tname}' for struct '{name}'")
+            
+            # Do NOT wrap struct types in pointers anymore
+            # Everything is embedded by value
+            resolved_types.append(typ)
+
+        # Set the actual body of the struct
+        identified.set_body(*resolved_types)
+        
+        # Update environment with resolved types
+        self.env.define_struct(name, identified, field_names, resolved_types)
+        return identified
+
+    def __is_struct_type(self, t: ir.Type) -> bool:
+        return isinstance(t, (ir.IdentifiedStructType, ir.LiteralStructType))
+    
+    def __is_pointer_to_struct(self, t: ir.Type) -> bool:
+        return isinstance(t, ir.PointerType) and self.__is_struct_type(t.pointee)
     # endregion

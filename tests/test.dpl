@@ -1,20 +1,33 @@
-import "math.dpl";
+struct Point {
+    x: i32;
+    y: i32;
+}
+
+struct Circle {
+    center: Point;
+    radius: i32;
+}
 
 fn main() -> i32 {
-    let a: i32 = 0;
+    let p: Point = new Point {
+        x = 10;
+        y = 5;
+    };
 
-    for (let i: i32 = 0; i < 10; i += 1) {
-        if i == 2 {
-            printf("i + 8 = %i\n", add(i, 8));
-            continue;
+    let c: Circle = new Circle {
+        center = p;
+        radius = 10;
+    };
+
+    let c2: Circle = new Circle {
+        center = new Point {
+            x = 100;
+            y = 50;
         };
-        if i == 5 {
-            break;
-        };
+        radius = 1;
+    };
 
-        printf("i = %i\n", i);
-        a = i;
-    }
+    printf("%i\n", c2.radius);
 
-    a
+    0
 }

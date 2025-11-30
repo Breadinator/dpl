@@ -16,6 +16,7 @@ class NodeType(Enum):
     ContinueStatement = "ContinueStatement"
     BreakStatement = "BreakStatement"
     ImportStatement = "ImportStatement"
+    StructStatement = "StructStatement"
 
     # Expressions
     InfixExpression = "InfixExpression"
@@ -23,6 +24,8 @@ class NodeType(Enum):
     IfExpression = "IfExpression"
     CallExpression = "CallExpression"
     PrefixExpression = "PrefixExpression"
+    NewStructExpression = "NewStructExpression"
+    FieldAccessExpression = "FieldAccessExpression"
 
     # Literals
     I32Literal = "I32Literal"
@@ -237,6 +240,20 @@ class ImportStatement(Statement):
             "type": self.type().value,
             "path": self.path,
         }
+    
+class StructStatement(Statement):
+    def __init__(self, ident: 'IdentifierLiteral', fields: list[tuple[str, str]]) -> None:
+        self.ident = ident
+        self.fields = fields
+
+    def type(self) -> NodeType:
+        return NodeType.StructStatement
+    
+    def json(self) -> dict[str, Any]:
+        return {
+            "ident": self.ident.json(),
+            "fields": [[field[0], field[1]] for field in self.fields],
+        }
 # endregion
 
 # region Expressions
@@ -322,6 +339,40 @@ class PrefixExpression(Expression):
             "type": self.type().value,
             "operator": self.operator,
             "right_node": self.right_node.json()
+        }
+
+class NewStructExpression(Expression):
+    def __init__(
+        self, 
+        struct_ident: 'IdentifierLiteral', 
+        fields: list[tuple['IdentifierLiteral', Expression]]
+    ) -> None:
+        self.struct_ident = struct_ident
+        self.fields = fields
+
+    def type(self) -> NodeType:
+        return NodeType.NewStructExpression
+    
+    def json(self) -> dict[str, Any]:
+        return {
+            "type": self.type().value,
+            "struct_ident": self.struct_ident.json(),
+            "fields": [[field[0].json(), field[1].json()] for field in self.fields]
+        }
+    
+class FieldAccessExpression(Expression):
+    def __init__(self, base: Expression, field: 'IdentifierLiteral') -> None:
+        self.base = base
+        self.field = field
+    
+    def type(self) -> NodeType:
+        return NodeType.FieldAccessExpression
+    
+    def json(self) -> dict[str, Any]:
+        return {
+            "type": self.type().value,
+            "base": self.base.json(),
+            "field": self.field.json(),
         }
 # endregion
 

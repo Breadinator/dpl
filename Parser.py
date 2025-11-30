@@ -3,9 +3,9 @@ from Token import Token, TokenType
 
 from AST import Statement, Expression, Program
 from AST import FunctionParameter
-from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement
+from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement, StructStatement
 from AST import WhileStatement, BreakStatement, ContinueStatement, ForStatement
-from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression
+from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression, NewStructExpression, FieldAccessExpression
 from AST import I32Literal, F32Literal, IdentifierLiteral, BooleanLiteral, StringLiteral
 
 from typing import Callable, Optional
@@ -39,6 +39,7 @@ PRECEDENCES: dict[TokenType, PrecedenceType] = {
     TokenType.GT_EQ: PrecedenceType.P_LESSGREATER,
     TokenType.LPAREN: PrecedenceType.P_CALL,
     TokenType.PIPE: PrecedenceType.P_CALL,
+    TokenType.DOT: PrecedenceType.P_CALL, # TODO: decide
 }
 
 class Parser:
@@ -61,6 +62,7 @@ class Parser:
             TokenType.STRING: self.__parse_string_literal,
             TokenType.MINUS: self.__parse_prefix_expression,
             TokenType.BANG: self.__parse_prefix_expression,
+            TokenType.NEW: self.__parse_new_struct_expression,
         }
         self.infix_parse_fns: dict[TokenType, Callable[[Expression], Optional[Expression]]] = {
             TokenType.PLUS: self.__parse_infix_expression,
@@ -77,6 +79,7 @@ class Parser:
             TokenType.GT_EQ: self.__parse_infix_expression,
             TokenType.LPAREN: self.__parse_call_expression, # pyright: ignore[reportAttributeAccessIssue]
             TokenType.PIPE: self.__parse_pipe_call_expression,
+            TokenType.DOT: self.__parse_field_access_expression,
         }
     
     # region Parser Helpers
@@ -106,6 +109,14 @@ class Parser:
             return True
         else:
             self.__peek_error(tt)
+            return False
+        
+    def __expect_peek_type_name(self) -> bool:
+        if self.__peek_token_is(TokenType.TYPE) or self.__peek_token_is(TokenType.IDENT):
+            self.__next_token()
+            return True
+        else:
+            self.__peek_error(TokenType.TYPE)
             return False
         
     def __current_precedence(self) -> PrecedenceType:
@@ -157,6 +168,8 @@ class Parser:
                 return self.__parse_break_statement()
             case TokenType.IMPORT:
                 return self.__parse_import_statement()
+            case TokenType.STRUCT:
+                return self.__parse_struct_statement()
             case _:
                 return self.__parse_expression_statement()
     
@@ -173,21 +186,17 @@ class Parser:
     def __parse_let_statement(self) -> Optional[LetStatement]:
         # let a: i32 = 10;
         if not self.__expect_peek(TokenType.IDENT):
-            self.__peek_error(TokenType.IDENT)
             return None
         stmt_name = IdentifierLiteral(self.current_token.literal)
 
         if not self.__expect_peek(TokenType.COLON):
-            self.__peek_error(TokenType.COLON)
             return None
         
-        if not self.__expect_peek(TokenType.TYPE):
-            self.__peek_error(TokenType.TYPE)
+        if not self.__expect_peek_type_name():
             return None
         stmt_value_type = self.current_token.literal
 
         if not self.__expect_peek(TokenType.EQ):
-            self.__peek_error(TokenType.EQ)
             return None
         self.__next_token()
         
@@ -215,7 +224,7 @@ class Parser:
         if not self.__expect_peek(TokenType.ARROW):
             return None
         
-        if not self.__expect_peek(TokenType.TYPE):
+        if not self.__expect_peek_type_name():
             return None
         return_type = self.current_token.literal
 
@@ -357,6 +366,58 @@ class Parser:
         if not self.__expect_peek(TokenType.SEMICOLON):
             return None
         return stmt
+    
+    def __parse_struct_statement(self) -> Optional[StructStatement]:
+        # current_token is 'struct' when called
+        if not self.__expect_peek(TokenType.IDENT):
+            return None
+        ident = IdentifierLiteral(self.current_token.literal)
+
+        if not self.__expect_peek(TokenType.LBRACE):
+            return None
+
+        fields: list[tuple[str, str]] = []
+
+        # move into the first token after '{'
+        self.__next_token()
+
+        # parse `name: Type;` entries until `}` or EOF
+        while not self.__current_token_is(TokenType.RBRACE) and not self.__current_token_is(TokenType.EOF):
+            # field name must be an identifier
+            if not self.__current_token_is(TokenType.IDENT):
+                self.__peek_error(TokenType.IDENT)   # yields a helpful error message
+                return None
+            field_name = self.current_token.literal
+
+            # next must be ':'
+            if not self.__expect_peek(TokenType.COLON):
+                return None
+            # advance to the type token
+            self.__next_token()
+
+            # field type can be either a builtin TYPE token or an IDENT (user-defined type)
+            if not (self.__current_token_is(TokenType.TYPE) or self.__current_token_is(TokenType.IDENT)):
+                self.__peek_error(TokenType.TYPE)
+                return None
+            field_type = self.current_token.literal
+
+            fields.append((field_name, field_type))
+
+            # expect semicolon after a field
+            if not self.__expect_peek(TokenType.SEMICOLON):
+                return None
+
+            # advance into the next token after the semicolon
+            self.__next_token()
+
+        # ensure we are at the closing brace (should be, but be strict)
+        if not self.__current_token_is(TokenType.RBRACE):
+            if not self.__expect_peek(TokenType.RBRACE):
+                return None
+
+        return StructStatement(ident, fields)
+
+
     # endregion
 
     # region Expression Methods
@@ -551,6 +612,75 @@ class Parser:
         if right_node is None:
             return None
         return PrefixExpression(operator, right_node)
+
+    def __parse_new_struct_expression(self) -> Optional[NewStructExpression]:
+        # current_token == NEW
+        # next token must be the type name (TYPE or IDENT)
+        if not (self.__peek_token_is(TokenType.TYPE) or self.__peek_token_is(TokenType.IDENT)):
+            self.__peek_error(TokenType.TYPE)
+            return None
+
+        self.__next_token()  # now current_token is the type name
+        struct_ident = IdentifierLiteral(self.current_token.literal)
+
+        # Expect opening brace
+        if not self.__expect_peek(TokenType.LBRACE):
+            return None
+
+        # Move into first token inside braces
+        self.__next_token()
+
+        # collect field initializers
+        fields: list[tuple[IdentifierLiteral, Expression]] = []
+
+        while not self.__current_token_is(TokenType.RBRACE) and not self.__current_token_is(TokenType.EOF):
+            # skip stray semicolons
+            if self.__current_token_is(TokenType.SEMICOLON):
+                self.__next_token()
+                continue
+
+            # field name must be an identifier
+            if not self.__current_token_is(TokenType.IDENT):
+                self.__peek_error(TokenType.IDENT)
+                return None
+            field_name = IdentifierLiteral(self.current_token.literal)
+
+            # expect =
+            if not self.__expect_peek(TokenType.EQ):
+                return None
+
+            # advance into the initializer expression token
+            self.__next_token()
+
+            init_expr = self.__parse_expression(PrecedenceType.P_LOWEST)
+            if init_expr is None:
+                return None
+
+            fields.append((field_name, init_expr))
+
+            # optional semicolon termination
+            if self.__peek_token_is(TokenType.SEMICOLON):
+                self.__next_token()  # consume ';'
+                self.__next_token()  # advance to next token
+                continue
+            else:
+                self.__next_token()
+
+        # ensure we are at RBRACE
+        if not self.__current_token_is(TokenType.RBRACE):
+            if not self.__expect_peek(TokenType.RBRACE):
+                return None
+
+        return NewStructExpression(struct_ident=struct_ident, fields=fields)
+
+    def __parse_field_access_expression(self, lhs: Expression) -> Optional[FieldAccessExpression]:
+        if not self.__peek_token_is(TokenType.IDENT):
+            self.__peek_error(TokenType.IDENT)
+            return None
+
+        self.__next_token()  
+        field_ident = IdentifierLiteral(self.current_token.literal)
+        return FieldAccessExpression(lhs, field_ident)
 
     # endregion
 

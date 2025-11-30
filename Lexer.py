@@ -168,6 +168,8 @@ class Lexer:
                     tok = self.__new_token(TokenType.PIPE, ch + self.current_char)
                 else:
                     raise NotImplementedError
+            case '.':
+                tok = self.__new_token(TokenType.DOT, self.current_char)
             case None:
                 tok = self.__new_token(TokenType.EOF, None)
             case _:
