@@ -1,19 +1,23 @@
 import json
+import logging
 import os
+from pathlib import Path
+import sys
 import subprocess
-import llvmlite.binding as llvm # pyright: ignore[reportMissingTypeStubs]
+import llvmlite.binding as llvm
 
 from Lexer import Lexer
 from Parser import Parser
 from Compiler import Compiler
 
-LEXER_DEBUG = False
+def main(path: str, lexer_debug: bool):
+    abs_path = Path(path).absolute()
+    dir = abs_path.parent
 
-if __name__ == '__main__':
-    with open("tests/test.dpl", "r") as f:
+    with open(abs_path, "r") as f:
         code = f.read()
     
-    if LEXER_DEBUG:
+    if lexer_debug:
         debug_lex = Lexer(code)
         while debug_lex.current_char is not None:
             print(debug_lex.next_token())
@@ -32,7 +36,7 @@ if __name__ == '__main__':
     with open("build/ast.json", "w") as f:
         json.dump(program.json(), f, indent=4)
 
-    c = Compiler()
+    c = Compiler(dir)
     c.compile(program)
 
     # Output steps
@@ -45,3 +49,29 @@ if __name__ == '__main__':
     # run clang
     # clang build/ir.ll -o build/exe.exe
     subprocess.run(["clang", "build/ir.ll", "-o", "build/exe.exe"])
+
+def setup_logger():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(levelname)s] %(asctime)s - %(message)s"
+    )
+
+def parse_args(args: list[str]) -> tuple[str, bool]:
+    path = None
+    lexer_debug = False
+
+    for arg in args:
+        if arg == "--lexer_debug":
+            lexer_debug = True
+        else:
+            path = arg
+
+    if path is None:
+        logging.error("Requires path")
+        exit(1)
+    return path, lexer_debug
+
+if __name__ == '__main__':
+    setup_logger()
+    path, lexer_debug = parse_args(sys.argv[1:])
+    main(path, lexer_debug)

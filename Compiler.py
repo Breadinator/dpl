@@ -2,6 +2,7 @@ from llvmlite import ir
 from llvmlite.ir import instructions
 from typing import Optional
 import os
+from pathlib import Path
 
 from AST import Node, NodeType, Expression, Program
 from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement
@@ -14,7 +15,7 @@ from Lexer import Lexer
 from Parser import Parser
 
 class Compiler:
-    def __init__(self) -> None:
+    def __init__(self, dir: Path) -> None:
         self.type_map: dict[str, ir.Type] = {
             "i32": ir.IntType(32),
             "f32": ir.FloatType(),
@@ -37,6 +38,7 @@ class Compiler:
         self.breakpoints: list[ir.Block] = []
         self.continues: list[ir.Block] = []
 
+        self.dir = dir
         self.global_parsed_modules: dict[str, Program] = {}
 
     def __initialize_builtins(self) -> None:
@@ -308,7 +310,7 @@ class Compiler:
     def __visit_import_statement(self, node: ImportStatement) -> None:
         if self.global_parsed_modules.get(node.path) is not None:
             return None
-        with open(os.path.abspath(f"tests/{node.path}"), "r") as f:
+        with open(self.dir / node.path, "r") as f:
             module_code = f.read()
         
         l = Lexer(module_code)
