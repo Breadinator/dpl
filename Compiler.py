@@ -643,31 +643,42 @@ class Compiler:
 
     def __visit_field_access_expression(self, node: FieldAccessExpression) -> tuple[ir.Value, ir.Type]:
         field_name = node.field.value
-        value, typ = self.__resolve_value(node.base)
-        if value is None or typ is None:
-            raise ValueResolverError
-        
-        if self.__is_pointer_to_struct(typ):
-            typ = typ.pointee
 
-        if not isinstance(typ, ir.IdentifiedStructType):
-            raise TypeMismatchError(f"field access can only be performed on a struct, tried to perform on {typ}")
+        # Resolve base
+        base_value, base_type = self.__resolve_value(node.base)
+        if base_value is None or base_type is None:
+            raise ValueResolverError("cannot resolve base of field access")
 
-        name = typ.name
-        expected_type, fields, field_types = self.env.lookup_struct(name)
-        if expected_type is None or fields is None or field_types is None:
-            raise LookupError(f"struct {name} doesn't exist")
-        if typ != expected_type:
-            raise TypeMismatchError(f"got {typ}, expected {expected_type}")
-        if field_name not in fields:
-            raise FieldMismatchError(f"{field_name} not in struct `{name}`")
-        field_index = fields.index(field_name)
-        
-        field_ptr = self.builder.gep(value, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), field_index)])
+        # Unwrap pointer type if needed
+        if isinstance(base_type, ir.PointerType):
+            check_type = base_type.pointee
+        else:
+            check_type = base_type
+
+        if not isinstance(check_type, (ir.IdentifiedStructType, ir.LiteralStructType)):
+            raise TypeMismatchError(f"field access base must be a struct, got {check_type}")
+
+        # Lookup struct info
+        struct_type, field_names, field_types = self.env.lookup_struct(check_type.name)
+        if struct_type is None:
+            raise LookupError(f"struct `{check_type.name}` not found")
+        if field_name not in field_names:
+            raise FieldMismatchError(f"struct `{check_type.name}` has no field `{field_name}`")
+        field_index = field_names.index(field_name)
         field_type = field_types[field_index]
-        field_value = self.builder.load(field_ptr)
 
-        return field_value, field_type
+        # Pointer to the field inside the struct
+        field_ptr = self.builder.gep(
+            base_value,
+            [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), field_index)]
+        )
+
+        # Nested struct: return pointer, primitives: load
+        if isinstance(field_type, (ir.IdentifiedStructType, ir.LiteralStructType)):
+            return field_ptr, field_type
+        else:
+            return self.builder.load(field_ptr), field_type
+
     # endregion
 
     # endregion

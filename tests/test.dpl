@@ -27,7 +27,7 @@ fn main() -> i32 {
         radius = 1;
     };
 
-    printf("%i\n", c2.radius);
+    printf("%i\n", c2.center.x);
 
     0
 }
