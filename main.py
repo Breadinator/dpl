@@ -26,11 +26,16 @@ def main(path: str, lexer_debug: bool):
     l = Lexer(code)
     p = Parser(l)
 
-    program = p.parse_program()
-    if len(p.errors) > 0:
-        for err in p.errors:
-            print(err)
+    try:
+        program = p.parse_program()
+    except Exception as e:
+        print(e)
         exit(1)
+    finally:
+        if len(p.errors) > 0:
+            for err in p.errors:
+                print(err)
+            exit(1)
 
     os.makedirs("./build", exist_ok=True)
     with open("build/ast.json", "w") as f:

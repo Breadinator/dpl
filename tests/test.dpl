@@ -1,25 +1,10 @@
 import "math.dpl";
 
 fn main() -> i32 {
-    let p: Point = new Point {
-        x = 10;
-        y = 5;
-    };
-
-    let c: Circle = new Circle {
-        center = p;
-        radius = 10;
-    };
-
-    let c2: Circle = new Circle {
-        center = new Point {
-            x = 100;
-            y = p.x |> double;
-        };
-        radius = 1;
-    };
-
-    printf("%i\n", c2.center.x);
+    enum Foo {
+        Bar,
+        Baz,
+    }
 
     0
 }

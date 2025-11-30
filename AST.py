@@ -17,6 +17,7 @@ class NodeType(Enum):
     BreakStatement = "BreakStatement"
     ImportStatement = "ImportStatement"
     StructStatement = "StructStatement"
+    EnumStatement = "EnumStatement"
 
     # Expressions
     InfixExpression = "InfixExpression"
@@ -251,8 +252,24 @@ class StructStatement(Statement):
     
     def json(self) -> dict[str, Any]:
         return {
+            "type": self.type().value,
             "ident": self.ident.json(),
             "fields": [[field[0], field[1]] for field in self.fields],
+        }
+
+class EnumStatement(Statement):
+    def __init__(self, name: 'IdentifierLiteral', variants: list['IdentifierLiteral']) -> None:
+        self.name = name
+        self.variants = variants
+    
+    def type(self) -> NodeType:
+        return NodeType.EnumStatement
+    
+    def json(self) -> dict[str, Any]:
+        return {
+            "type": self.type().value,
+            "name": self.name,
+            "variants": [variant.json() for variant in self.variants]
         }
 # endregion
 

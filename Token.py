@@ -65,6 +65,7 @@ class TokenType(Enum):
     BREAK = "BREAK"
     IMPORT = "IMPORT"
     STRUCT = "STRUCT"
+    ENUM = "ENUM"
     NEW = "NEW"
 
     # Typing
@@ -98,6 +99,7 @@ KEYWORDS: dict[str, TokenType] = {
     "import": TokenType.IMPORT,
     "struct": TokenType.STRUCT,
     "new": TokenType.NEW,
+    "enum": TokenType.ENUM,
 }
 
 TYPE_KEYWORDS: list[str] = ["i32", "f32", "str", "void"]
