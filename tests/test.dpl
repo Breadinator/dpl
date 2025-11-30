@@ -1,0 +1,10 @@
+fn main() -> i32 {
+    let a: i32 = 0;
+
+    while a < 10 {
+        printf("a = %i\n", a);
+        a = a + 1;
+    }
+
+    return a;
+}
