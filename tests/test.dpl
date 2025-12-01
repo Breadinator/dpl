@@ -9,7 +9,5 @@ fn main() -> i32 {
          printf("Hello, world!\n");
     };
 
-    
-
     0
 }

@@ -85,6 +85,10 @@ class Token:
     
     def __repr__(self) -> str:
         return str(self)
+    
+    def add_exception_info(self, e: Exception) -> Exception:
+        e.add_note(f"line {self.line_no} at pos {self.position}")
+        return e
 
 KEYWORDS: dict[str, TokenType] = {
     "let": TokenType.LET,

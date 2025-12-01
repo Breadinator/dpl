@@ -99,7 +99,7 @@ class TypeChecker:
             if isinstance(ty, Void):
                 return ty
             if ty2 is None and not isinstance(ty, Void):
-                raise BranchMismatchError
+                raise BranchMismatchError(f"{ty.name} is not void")
             if ty != ty2 and ty2 is not None:
                 raise BranchMismatchError(f"{ty.name} not equal to {ty2.name}")
             return ty

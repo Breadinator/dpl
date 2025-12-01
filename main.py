@@ -27,16 +27,7 @@ def main(path: str, lexer_debug: bool, check: bool):
     l = Lexer(code)
     p = Parser(l)
 
-    try:
-        program = p.parse_program()
-    except Exception as e:
-        print(repr(e))
-        exit(1)
-    finally:
-        if len(p.errors) > 0:
-            for err in p.errors:
-                print(err)
-            exit(1)
+    program = p.parse_program()
     logging.info("program parsed")
     
     if check:
