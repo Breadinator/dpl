@@ -85,7 +85,7 @@ class PointerType(Type):
     The type of all pointer values.
     By default (without specialisation) represents an opaque pointer.
     """
-    pointee: ir.PointerType
+    pointee: ir.Type
 
     is_opaque = ...
     is_pointer = ...

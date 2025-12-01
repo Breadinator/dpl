@@ -789,7 +789,8 @@ class Compiler:
         if value is None or typ is None:
             raise ValueResolverError
         if typ != ir.IntType(32):
-            raise CompilerException("match didn't evaluate to i32")
+            # union or illegal
+            return self.__visit_match_expression_union(node)
         
         counter = self.__increment_counter()
         fn = self.builder.function
@@ -836,7 +837,96 @@ class Compiler:
         phi.add_incoming(ir.Constant(ty, ir.Undefined), prev_block)
         return phi, ty
 
+    def __visit_match_expression_union(self, node: MatchExpression) -> tuple[ir.Value, ir.Type]:
+        # Resolve the union value
+        union_val, union_type = self.__resolve_value(node.match)
+        if union_val is None or union_type is None:
+            raise ValueResolverError("could not resolve union in match expression")
+        
+        # If passed a pointer, load the struct
+        is_ptr = isinstance(union_type, ir.PointerType)
+        if is_ptr:
+            union_ptr = union_val
+            union_val = self.builder.load(union_ptr)
+            union_type = union_type.pointee
+        else:
+            union_ptr = self.builder.alloca(union_type)
+            self.builder.store(union_val, union_ptr)
 
+        if not isinstance(union_type, ir.IdentifiedStructType):
+            raise TypeMismatchError(f"expected union struct type in match expression, got {union_type}")
+
+        union_struct = union_type
+        # Lookup the union metadata by name
+        union_metadata = self.env.lookup_union(union_struct.name)
+        if union_metadata is None:
+            raise LookupError(f"union for struct `{union_struct}` not found")
+
+        fn = self.builder.function
+        counter = self.__increment_counter()
+
+        # Load the tag and value pointer
+        tag_ptr = self.builder.gep(union_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)])
+        tag_val = self.builder.load(tag_ptr)
+        val_ptr_ptr = self.builder.gep(union_ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)])
+        val_ptr = self.builder.load(val_ptr_ptr)
+
+        # Prepare blocks
+        entry_block = self.builder.block
+        end_block = fn.append_basic_block(f"match_{counter}_end")
+
+        case_blocks: list[tuple[int, ir.Block, ir.Value, ir.Type]] = []
+
+        # Create blocks for each variant
+        for evae, block_expr in node.cases:
+            if evae.variant.value not in union_metadata.variant_names:
+                raise FieldMismatchError(f"union `{union_metadata.name}` doesn't have variant `{evae.variant.value}`")
+            variant_idx = union_metadata.variant_names.index(evae.variant.value)
+
+            case_block = fn.append_basic_block(f"match_{counter}_case_{variant_idx}")
+            self.builder.position_at_start(case_block)
+
+            # If the variant has a payload, bind it to the local variable
+            payload_ty = union_metadata.variant_types[variant_idx]
+            if payload_ty is not None and evae.value is not None:
+                # evae.value is an IdentifierLiteral for the binding
+                payload_ptr = self.builder.bitcast(val_ptr, ir.PointerType(payload_ty))
+                if not isinstance(evae.value, IdentifierLiteral):
+                    raise Exception("should be literal")
+                self.env.define(evae.value.value, payload_ptr, payload_ty)
+
+            # Visit the block
+            result_val, result_ty = self.__visit_block_expression(block_expr)
+            if result_val is None:
+                result_val = ir.Constant(ir.IntType(32), 0)
+            if result_ty is None:
+                result_ty = ir.IntType(32)
+
+            # Branch to end block if not already terminated
+            if not self.builder.block.is_terminated:
+                self.builder.branch(end_block)
+
+            case_blocks.append((variant_idx, case_block, result_val, result_ty))
+
+        # Insert switch in the entry block
+        self.builder.position_at_end(entry_block)
+        switch_inst = self.builder.switch(tag_val, end_block)
+        for variant_idx, case_block, _, _ in case_blocks:
+            switch_inst.add_case(ir.Constant(ir.IntType(32), variant_idx), case_block)
+
+        # Build PHI node at the end
+        self.builder.position_at_start(end_block)
+        if not case_blocks:
+            return ir.Constant(ir.IntType(32), 0), ir.IntType(32)
+        
+        phi_ty = case_blocks[0][3]
+        phi = self.builder.phi(phi_ty)
+        for _, case_block, result_val, _ in case_blocks:
+            phi.add_incoming(result_val, case_block)
+        # Default incoming from entry block (should never execute)
+        phi.add_incoming(ir.Constant(phi_ty, ir.Undefined), entry_block)
+
+        return phi, phi_ty
     # endregion
 
     # endregion

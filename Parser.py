@@ -585,38 +585,72 @@ class Parser:
 
 
     def __parse_match_expression(self) -> MatchExpression:
-        self.__next_token()
+        self.__next_token()  # skip 'match'
         match_expr = self.__parse_expression(PrecedenceType.P_LOWEST)
 
         self.__expect_peek(TokenType.LBRACE)
-        self.__next_token()
+        self.__next_token()  # skip '{'
 
         cases: list[tuple[EnumVariantAccessExpression, BlockExpression]] = []
-        while not self.__current_token_is(TokenType.RBRACE) and not self.__current_token_is(TokenType.EOF):
-            if not self.__current_token_is(TokenType.IDENT):
-                raise self.current_token.add_exception_info(ExpectedTokenError(f"expected IDENT got {self.current_token}"))
-            lhs = IdentifierLiteral(self.current_token.literal)
 
+        while not self.__current_token_is(TokenType.RBRACE) and not self.__current_token_is(TokenType.EOF):
+            # Skip commas between cases
+            if self.__current_token_is(TokenType.COMMA):
+                self.__next_token()
+                continue
+
+            if not self.__current_token_is(TokenType.IDENT):
+                raise self.current_token.add_exception_info(
+                    ExpectedTokenError(f"expected IDENT got {self.current_token}")
+                )
+
+            # Parse the "Type::Variant" part
+            lhs = IdentifierLiteral(self.current_token.literal)
             self.__expect_peek(TokenType.DOUBLE_COLON)
-            self.__expect_peek(TokenType.IDENT)
+            self.__next_token()  # skip DOUBLE_COLON
+            if not self.__current_token_is(TokenType.IDENT):
+                raise self.current_token.add_exception_info(
+                    ExpectedTokenError(f"expected variant IDENT got {self.current_token}")
+                )
             rhs = IdentifierLiteral(self.current_token.literal)
 
-            enum_access = EnumVariantAccessExpression(lhs, rhs)
+            # Parse optional receiver for unions/enums
+            value_expr: Optional[IdentifierLiteral] = None
+            if self.__peek_token_is(TokenType.LPAREN):
+                self.__next_token()  # skip to LPAREN
+                self.__next_token()  # move into parens
+                if self.__current_token_is(TokenType.IDENT):
+                    value_expr = IdentifierLiteral(self.current_token.literal)
+                    if self.__peek_token_is(TokenType.RPAREN):
+                        self.__next_token()  # skip RPAREN
+                    else:
+                        self.__peek_error(TokenType.RPAREN)
+                else:
+                    raise self.current_token.add_exception_info(
+                        ExpectedTokenError(f"expected IDENT inside parentheses for variant receiver")
+                    )
+
+            enum_access = EnumVariantAccessExpression(lhs, rhs, value_expr)
 
             self.__expect_peek(TokenType.FATARROW)
-            block = self.__parse_block_expression()
+            self.__next_token()  # skip '=>'
 
+            block = self.__parse_block_expression()
             cases.append((enum_access, block))
 
-            self.__next_token()
+            # Optional comma after a case
+            if self.__peek_token_is(TokenType.COMMA):
+                self.__next_token()
+
+            self.__next_token()  # move to next token
 
         if not self.__current_token_is(TokenType.RBRACE):
             self.__expect_peek(TokenType.RBRACE)
-        self.__next_token()
 
+        self.__next_token()  # skip '}'
         return MatchExpression(match_expr, cases)
 
-            
+
     # endregion
 
     # region Prefix Methods

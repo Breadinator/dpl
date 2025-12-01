@@ -5,5 +5,27 @@ union OptionI32 {
 
 fn main() -> i32 {
     let foo: OptionI32 = OptionI32::Some(10);
-    0
+
+    let res: i32 = match foo {
+        OptionI32::Some(val) => {
+            1
+        },
+        OptionI32::None => {
+            0
+        },
+    };
+
+    if res == 1 {
+        printf("Some!\n");
+    } else {
+        printf("None!\n");
+    };
+
+    if res == 0 {
+        printf("Still none\n");
+        1
+    } else {
+        printf("Still some\n");
+        0
+    }
 }
