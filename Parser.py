@@ -537,8 +537,7 @@ class Parser:
         return NewStructExpression(struct_ident=struct_ident, fields=fields)
 
     def __parse_field_access_expression(self, lhs: Expression) -> FieldAccessExpression:
-        if not self.__peek_token_is(TokenType.IDENT):
-            self.__peek_error(TokenType.IDENT)
+        self.__expect_peek(TokenType.IDENT)
         self.__next_token()  
         field_ident = IdentifierLiteral(self.current_token.literal)
         return FieldAccessExpression(lhs, field_ident)
