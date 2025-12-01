@@ -337,11 +337,6 @@ class Compiler:
         l = Lexer(module_code)
         p = Parser(l)
         program = p.parse_program()
-        if len(p.errors) > 0:
-            print(f"Error in imported module: {node.path}")
-            for err in p.errors:
-                print(err)
-            exit(1)
         self.compile(program)
         self.global_parsed_modules[node.path] = program
     

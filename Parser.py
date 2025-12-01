@@ -554,26 +554,22 @@ class Parser:
         self.__next_token()
         match_expr = self.__parse_expression(PrecedenceType.P_LOWEST)
 
-        if not self.__expect_peek(TokenType.LBRACE):
-            raise ParserException("expected '{' after match expression")
+        self.__expect_peek(TokenType.LBRACE)
         self.__next_token()
 
         cases: list[tuple[EnumVariantAccessExpression, BlockExpression]] = []
         while not self.__current_token_is(TokenType.RBRACE) and not self.__current_token_is(TokenType.EOF):
             if not self.__current_token_is(TokenType.IDENT):
-                raise ExpectedTokenError(f"expected IDENT got {self.current_token}")
+                raise self.current_token.add_exception_info(ExpectedTokenError(f"expected IDENT got {self.current_token}"))
             lhs = IdentifierLiteral(self.current_token.literal)
 
-            if not self.__expect_peek(TokenType.DOUBLE_COLON):
-                raise ParserException("expected '::' in match case")
-            if not self.__expect_peek(TokenType.IDENT):
-                raise ParserException("expected variant identifier in match case")
+            self.__expect_peek(TokenType.DOUBLE_COLON)
+            self.__expect_peek(TokenType.IDENT)
             rhs = IdentifierLiteral(self.current_token.literal)
 
             enum_access = EnumVariantAccessExpression(lhs, rhs)
 
-            if not self.__expect_peek(TokenType.FATARROW):
-                raise ParserException("expected '=>' after match case")
+            self.__expect_peek(TokenType.FATARROW)
             block = self.__parse_block_expression()
 
             cases.append((enum_access, block))
