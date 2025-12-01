@@ -1,8 +1,8 @@
-fn hello(name: str) -> i32 {
-    printf("Hello %s\n", name)
+union OptionI32 {
+    Some(i32),
+    None
 }
 
 fn main() -> i32 {
-    hello(", world!");
     0
 }

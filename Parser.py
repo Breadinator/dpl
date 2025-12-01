@@ -1,15 +1,7 @@
 from Lexer import Lexer
 from Token import Token, TokenType
 from Exceptions import *
-
-from AST import Statement, Expression, Program
-from AST import FunctionParameter
-from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement
-from AST import StructStatement, EnumStatement
-from AST import WhileStatement, BreakStatement, ContinueStatement, ForStatement
-from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression, MatchExpression
-from AST import NewStructExpression, FieldAccessExpression, EnumVariantAccessExpression
-from AST import I32Literal, F32Literal, IdentifierLiteral, BooleanLiteral, StringLiteral
+from AST import *
 
 from typing import Callable, Optional
 from enum import Enum, auto
@@ -172,6 +164,8 @@ class Parser:
                 return self.__parse_struct_statement()
             case TokenType.ENUM:
                 return self.__parse_enum_statement()
+            case TokenType.UNION:
+                return self.__parse_union_statement()
             case _:
                 return self.__parse_expression_statement()
     
@@ -361,6 +355,37 @@ class Parser:
         self.__next_token()
 
         return EnumStatement(name, variants)
+
+    def __parse_union_statement(self) -> UnionStatement:
+        self.__expect_peek(TokenType.IDENT)
+        name = IdentifierLiteral(self.current_token.literal)
+        
+        self.__expect_peek(TokenType.LBRACE)
+        self.__next_token()
+
+        variants: list[tuple[IdentifierLiteral, Optional[str]]] = []
+
+        while not self.__current_token_is(TokenType.RBRACE) and not self.__current_token_is(TokenType.EOF):
+            if not self.__current_token_is(TokenType.IDENT):
+                self.__peek_error(TokenType.IDENT)
+
+            variant_ident = IdentifierLiteral(self.current_token.literal)
+            variant_type = None
+
+            if self.__peek_token_is(TokenType.LPAREN):
+                self.__next_token()
+                self.__expect_peek_type_name()
+                variant_type = self.current_token.literal
+                self.__expect_peek(TokenType.RPAREN)
+            
+            variants.append((variant_ident, variant_type))
+
+            if self.__peek_token_is(TokenType.COMMA):
+                self.__next_token()
+            self.__next_token()
+        
+        return UnionStatement(name, variants)
+
     # endregion
 
     # region Expression Methods

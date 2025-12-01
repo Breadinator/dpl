@@ -1,26 +1,19 @@
 from llvmlite import ir # pyright: ignore[reportMissingTypeStubs]
 from typing import Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 @dataclass
 class EnumMetadata:
     name: str
     variants: list[str]
 
+@dataclass
 class Environment:
-    def __init__(
-        self, 
-        records: Optional[dict[str, tuple[ir.Value, ir.Type]]] = None,
-        structs: Optional[dict[str, tuple[ir.BaseStructType, list[str], list[ir.Type]]]] = None,
-        enums: Optional[dict[str, EnumMetadata]] = None,
-        parent: Optional['Environment'] = None, 
-        name: str = "global"
-    ) -> None:
-        self.records = records if records is not None else {}
-        self.structs = structs if structs is not None else {}
-        self.enums = enums if enums is not None else {}
-        self.parent = parent
-        self.name = name
+    records: dict[str, tuple[ir.Value, ir.Type]] = field(default_factory=lambda: {})
+    structs: dict[str, tuple[ir.BaseStructType, list[str], list[ir.Type]]] = field(default_factory=lambda: {})
+    enums: dict[str, EnumMetadata] = field(default_factory=lambda: {})
+    parent: Optional['Environment'] = field(default=None)
+    name: str = field(default_factory=lambda: "global")
     
     def define(self, name: str, value: ir.Value, typ: ir.Type) -> ir.Value:
         self.records[name] = (value, typ)

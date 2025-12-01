@@ -18,6 +18,7 @@ class NodeType(Enum):
     ImportStatement = "ImportStatement"
     StructStatement = "StructStatement"
     EnumStatement = "EnumStatement"
+    UnionStatement = "UnionStatement"
 
     # Expressions
     InfixExpression = "InfixExpression"
@@ -272,6 +273,21 @@ class EnumStatement(Statement):
             "type": self.type().value,
             "name": self.name.json(),
             "variants": [variant.json() for variant in self.variants]
+        }
+
+class UnionStatement(Statement):
+    def __init__(self, name: 'IdentifierLiteral', variants: list[tuple['IdentifierLiteral', Optional[str]]]) -> None:
+        self.name = name
+        self.variants = variants
+
+    def type(self) -> NodeType:
+        return NodeType.UnionStatement
+    
+    def json(self) -> dict[str, Any]:
+        return {
+            "type": self.type().value,
+            "name": self.name.json(),
+            "variants": [[variant[0].json(), variant[1]] for variant in self.variants]
         }
 # endregion
 

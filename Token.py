@@ -67,6 +67,7 @@ class TokenType(Enum):
     IMPORT = "IMPORT"
     STRUCT = "STRUCT"
     ENUM = "ENUM"
+    UNION = "UNION"
     NEW = "NEW"
     MATCH = "MATCH"
 
@@ -104,9 +105,10 @@ KEYWORDS: dict[str, TokenType] = {
     "break": TokenType.BREAK,
     "import": TokenType.IMPORT,
     "struct": TokenType.STRUCT,
-    "new": TokenType.NEW,
     "enum": TokenType.ENUM,
-    "match": TokenType.MATCH
+    "union": TokenType.UNION,
+    "new": TokenType.NEW,
+    "match": TokenType.MATCH,
 }
 
 TYPE_KEYWORDS: list[str] = ["i32", "f32", "str", "void"]
