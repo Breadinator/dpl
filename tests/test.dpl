@@ -1,13 +1,8 @@
+fn hello(name: str) -> i32 {
+    printf("Hello %s\n", name)
+}
+
 fn main() -> i32 {
-    let foo: str = if True {
-        "abc"
-    } else {
-        "foo"
-    };
-
-    if True {
-         printf("Hello, world!\n");
-    };
-
+    hello(", world!");
     0
 }

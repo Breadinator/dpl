@@ -797,7 +797,7 @@ class Compiler:
             case default:
                 raise NotImplementedError(f"Not implemented: {default}")
     
-    def __convert_string(self, string: str) -> tuple[ir.GlobalVariable, ir.Type]:
+    def __convert_string(self, string: str) -> tuple[ir.Value, ir.Type]:
         string = string.replace("\\n", "\n\0")
         fmt = f"{string}\0"
         c_fmt = ir.Constant(ir.ArrayType(ir.IntType(8), len(fmt)), bytearray(fmt.encode("utf8")))
@@ -805,7 +805,11 @@ class Compiler:
         global_fmt.linkage = 'internal'
         global_fmt.global_constant = True
         global_fmt.initializer = c_fmt
-        return global_fmt, global_fmt.type
+
+        gep = self.builder.gep(global_fmt, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)])
+        ptr = self.builder.bitcast(gep, ir.IntType(8).as_pointer())
+        return ptr, ir.IntType(8).as_pointer()
+
 
     def builtin_printf(self, params: list[ir.Value], return_type: ir.Type) -> Optional[instructions.CallInstr]:
         func, _ = self.env.lookup('printf')
