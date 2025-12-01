@@ -4,5 +4,6 @@ union OptionI32 {
 }
 
 fn main() -> i32 {
+    let foo: OptionI32 = OptionI32::Some(10);
     0
 }

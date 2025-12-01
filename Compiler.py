@@ -3,13 +3,7 @@ from llvmlite.ir import instructions
 from typing import Optional
 from pathlib import Path
 
-from AST import Node, NodeType, Expression, Program
-from AST import ExpressionStatement, LetStatement, FunctionStatement, ReturnStatement, AssignStatement, ImportStatement
-from AST import StructStatement, EnumStatement
-from AST import WhileStatement, ForStatement, BreakStatement, ContinueStatement
-from AST import InfixExpression, BlockExpression, IfExpression, CallExpression, PrefixExpression, NewStructExpression, FieldAccessExpression, EnumVariantAccessExpression, MatchExpression
-from AST import I32Literal, F32Literal, IdentifierLiteral, BooleanLiteral, StringLiteral
-
+from AST import *
 from Environment import Environment
 from Lexer import Lexer
 from Parser import Parser
@@ -102,6 +96,8 @@ class Compiler:
                 self.__visit_struct_statement(node) # pyright: ignore[reportArgumentType]
             case NodeType.EnumStatement:
                 self.__visit_enum_statement(node) # pyright: ignore[reportArgumentType]
+            case NodeType.UnionStatement:
+                self.__visit_union_statement(node) # pyright: ignore[reportArgumentType]
 
             # Expressions
             case NodeType.InfixExpression:
@@ -350,12 +346,35 @@ class Compiler:
         field_names = [f[0] for f in node.fields]
         field_type_names = [f[1] for f in node.fields]
 
-        _llvm_struct = self.__define_struct(name, field_names, field_type_names)
+        self.__define_struct(name, field_names, field_type_names)
     
     def __visit_enum_statement(self, node: EnumStatement) -> None:
         name = node.name.value
         variants = [variant.value for variant in node.variants]
         self.env.define_enum(name, variants)
+    
+    def __visit_union_statement(self, node: UnionStatement) -> None:
+        name = node.name.value
+        variant_names = [variant[0].value for variant in node.variants]
+        variant_type_names = [variant[1] for variant in node.variants]
+        
+        resolved_types: list[Optional[ir.Type]] = []
+        for tname in variant_type_names:
+            if tname is None:
+                resolved_types.append(None)
+                continue
+            typ = self.__resolve_type(tname)
+            if typ is None:
+                raise TypeError(f"unknown type `{tname}` for union `{name}`")
+            resolved_types.append(typ)
+        
+        identified = ir.global_context.get_identified_type(name) # type: ignore
+        if not isinstance(identified, ir.IdentifiedStructType):
+            raise Exception("this is annoying")
+        
+        # tag, pointer
+        identified.set_body(ir.IntType(32), ir.IntType(8).as_pointer())
+        self.env.define_union(name, variant_names, resolved_types, identified)
     # endregion
 
     # region Expressions
@@ -687,12 +706,84 @@ class Compiler:
     def __visit_enum_variant_access_expression(self, node: EnumVariantAccessExpression) -> tuple[ir.Value, ir.Type]:
         enum_metadata = self.env.lookup_enum(node.name.value)
         if enum_metadata is None:
-            raise LookupError(f"couldn't find enum with name `{node.name.value}`")
+            return self.__visit_union_access_expression(node)
         if node.variant.value not in enum_metadata.variants:
             raise FieldMismatchError(f"enum `{node.name.value}` doesn't have variant `{node.variant.value}`")
         idx = enum_metadata.variants.index(node.variant.value)
         return ir.Constant(ir.IntType(32), idx), ir.IntType(32)
     
+    def __visit_union_access_expression(self, node: EnumVariantAccessExpression) -> tuple[ir.Value, ir.Type]:
+        # Lookup union metadata
+        union_metadata = self.env.lookup_union(node.name.value)
+        if union_metadata is None:
+            raise LookupError(f"no enum or union with name `{node.name.value}` found")
+
+        # Check variant exists and find index
+        if node.variant.value not in union_metadata.variant_names:
+            raise FieldMismatchError(f"enum `{node.name.value}` doesn't have variant `{node.variant.value}`")
+        variant_index = union_metadata.variant_names.index(node.variant.value)
+
+        # Allocate the union struct on the stack: it was defined as { i32, i8* }
+        union_llvm_type = union_metadata.llvm_struct
+        ptr = self.builder.alloca(union_llvm_type)
+
+        # --- Store tag (i32) into field 0 ---
+        tag_ptr = self.builder.gep(ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 0)])
+        self.builder.store(ir.Constant(ir.IntType(32), variant_index), tag_ptr)
+
+        # --- Prepare payload pointer (i8*) for field 1 ---
+        payload_field_ptr = self.builder.gep(ptr, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), 1)])
+        i8_ptr_type = ir.IntType(8).as_pointer()
+
+        expected_type = union_metadata.variant_types[variant_index]  # Optional[ir.Type]
+
+        # If this variant has no payload type, ensure no value is supplied and store a null pointer
+        if expected_type is None:
+            if node.value is not None:
+                raise TypeMismatchError(f"variant `{node.variant.value}` of `{node.name.value}` does not accept a payload")
+            null_ptr = ir.Constant(i8_ptr_type, None)
+            self.builder.store(null_ptr, payload_field_ptr)
+            return ptr, ptr.type
+
+        # Variant expects a payload type
+        if node.value is None:
+            raise ValueResolverError(f"variant `{node.variant.value}` of `{node.name.value}` expects a payload")
+
+        # Resolve the provided payload expression
+        payload_val, payload_typ = self.__resolve_value(node.value)
+        if payload_val is None or payload_typ is None:
+            raise ValueResolverError("couldn't resolve union payload expression")
+
+        # Cases:
+        # 1) If the resolved value is already a pointer to the expected type (T*), reuse it.
+        # 2) If the resolved value is a value of the expected type (T), allocate T, store value into it, and use that pointer.
+        # 3) Otherwise, try to handle compatible pointer/value combos or raise a TypeMismatchError.
+
+        # If expected_type is a struct/identified type, payload_typ may be a pointer (from alloca) or the type itself.
+        payload_ptr_val: Optional[ir.Value] = None
+
+        # Case: payload expression already returned a pointer to expected_type
+        if isinstance(payload_typ, ir.PointerType) and payload_typ.pointee == expected_type:
+            payload_ptr_val = payload_val
+        # Case: payload expression returned a value whose type equals expected_type -> allocate and store
+        elif payload_typ == expected_type:
+            tmp = self.builder.alloca(expected_type)
+            self.builder.store(payload_val, tmp)
+            payload_ptr_val = tmp
+        # Case: payload expression returned a pointer to something else but can be bitcasted
+        elif isinstance(payload_typ, ir.PointerType) and expected_type == payload_typ.pointee:
+            # already caught above, but preserve logic; else try bitcast if types differ in identity but compatible
+            payload_ptr_val = payload_val
+        else:
+            # Not compatible
+            raise TypeMismatchError(f"union `{node.name.value}` variant `{node.variant.value}` expects payload of type `{expected_type}`, got `{payload_typ}`")
+
+        # Bitcast the payload pointer to i8* (opaque pointer) and store it
+        payload_i8 = self.builder.bitcast(payload_ptr_val, i8_ptr_type)
+        self.builder.store(payload_i8, payload_field_ptr)
+
+        return ptr, ptr.type
+
     def __visit_match_expression(self, node: MatchExpression) -> tuple[ir.Value, ir.Type]:
         value, typ = self.__resolve_value(node.match)
         if value is None or typ is None:

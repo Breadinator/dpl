@@ -569,10 +569,20 @@ class Parser:
     
     def __parse_enum_variant_access_expression(self, lhs: Expression) -> EnumVariantAccessExpression:
         if not isinstance(lhs, IdentifierLiteral):
-            raise ValueError
+            raise ValueError("Left side of enum/union variant access must be an identifier")
+
         self.__expect_peek(TokenType.IDENT)
-        field_ident = IdentifierLiteral(self.current_token.literal)
-        return EnumVariantAccessExpression(lhs, field_ident)
+        variant_ident = IdentifierLiteral(self.current_token.literal)
+
+        value_expr: Optional[Expression] = None
+        if self.__peek_token_is(TokenType.LPAREN):
+            self.__next_token()
+            self.__next_token() 
+            value_expr = self.__parse_expression(PrecedenceType.P_LOWEST)
+            self.__expect_peek(TokenType.RPAREN)
+
+        return EnumVariantAccessExpression(lhs, variant_ident, value_expr)
+
 
     def __parse_match_expression(self) -> MatchExpression:
         self.__next_token()

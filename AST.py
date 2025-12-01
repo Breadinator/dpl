@@ -411,9 +411,10 @@ class FieldAccessExpression(Expression):
         }
     
 class EnumVariantAccessExpression(Expression):
-    def __init__(self, name: 'IdentifierLiteral', variant: 'IdentifierLiteral') -> None:
+    def __init__(self, name: 'IdentifierLiteral', variant: 'IdentifierLiteral', value: Optional[Expression] = None) -> None:
         self.name = name
         self.variant = variant
+        self.value = value
     
     def type(self) -> NodeType:
         return NodeType.EnumVariantAccessExpression
@@ -423,6 +424,7 @@ class EnumVariantAccessExpression(Expression):
             "type": self.type().value,
             "name": self.name.json(),
             "variant": self.variant.json(),
+            "value": self.value.json() if self.value is not None else None,
         }
 
 class MatchExpression(Expression):

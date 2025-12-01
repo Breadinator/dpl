@@ -8,10 +8,18 @@ class EnumMetadata:
     variants: list[str]
 
 @dataclass
+class UnionMetadata:
+    name: str
+    variant_names: list[str]
+    variant_types: list[Optional[ir.Type]]
+    llvm_struct: ir.BaseStructType
+
+@dataclass
 class Environment:
     records: dict[str, tuple[ir.Value, ir.Type]] = field(default_factory=lambda: {})
     structs: dict[str, tuple[ir.BaseStructType, list[str], list[ir.Type]]] = field(default_factory=lambda: {})
     enums: dict[str, EnumMetadata] = field(default_factory=lambda: {})
+    unions: dict[str, UnionMetadata] = field(default_factory=lambda: {})
     parent: Optional['Environment'] = field(default=None)
     name: str = field(default_factory=lambda: "global")
     
@@ -54,5 +62,28 @@ class Environment:
             return self.enums[name]
         elif self.parent:
             return self.parent.lookup_enum(name)
+        else:
+            return None
+        
+    def define_union(
+        self,
+        name: str,
+        variant_names: list[str],
+        variant_types: list[Optional[ir.Type]],
+        llvm_struct: ir.BaseStructType,
+    ) -> UnionMetadata:
+        self.unions[name] = UnionMetadata(
+            name,
+            variant_names,
+            variant_types,
+            llvm_struct,
+        )
+        return self.unions[name]
+    
+    def lookup_union(self, name: str) -> Optional[UnionMetadata]:
+        if name in self.unions:
+            return self.unions[name]
+        elif self.parent:
+            return self.parent.lookup_union(name)
         else:
             return None
