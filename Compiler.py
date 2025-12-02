@@ -130,8 +130,6 @@ class Compiler:
         store_type = self.__resolve_type(node.value_type)
         
         rhs_val, rhs_type = self.__resolve_value(node.value)
-        if rhs_val is None or rhs_type is None:
-            raise ValueResolverError(f"couldn't resolve expression:\n{node.value}")
         
         if isinstance(store_type, ir.PointerType):
             var_ptr = self.builder.alloca(store_type)
@@ -150,7 +148,7 @@ class Compiler:
                 f"cannot store value of type `{rhs_type}` into variable `{name}` of type `{store_type}`"
             )
 
-        alloc_type = store_type if store_type is not None else rhs_type
+        alloc_type = store_type
         var_ptr = self.builder.alloca(alloc_type)
 
         self.builder.store(rhs_val, var_ptr)
@@ -159,8 +157,6 @@ class Compiler:
     def __visit_return_statement(self, node: ReturnStatement) -> None:
         value = node.return_value
         value, _typ = self.__resolve_value(value)
-        if value is None:
-            return None
         self.builder.ret(value)
 
     def __visit_function_statement(self, node: FunctionStatement) -> None:
@@ -220,8 +216,6 @@ class Compiler:
         var_ptr = var.value
  
         right_value, right_type = self.__resolve_value(value)
-        if right_value is None:
-            return       
         
         orig_value = self.builder.load(var_ptr)
         if isinstance(orig_value.type, ir.IntType) and isinstance(right_type, ir.FloatType):
@@ -265,8 +259,6 @@ class Compiler:
 
     def __visit_while_statement(self, node: WhileStatement) -> None:
         test, _ = self.__resolve_value(node.condition)
-        if test is None:
-            return
 
         while_loop_entry = self.builder.append_basic_block(f"while_loop_entry_{self.__increment_counter()}")
         while_loop_otherwise = self.builder.append_basic_block(f"while_loop_otherwise_{self.counter}")
@@ -275,8 +267,6 @@ class Compiler:
         self.builder.position_at_start(while_loop_entry)
         self.compile(node.body)
         test, _ = self.__resolve_value(node.condition)
-        if test is None:
-            return None
         self.builder.cbranch(test, while_loop_entry, while_loop_otherwise)
         self.builder.position_at_start(while_loop_otherwise)
 
@@ -302,8 +292,6 @@ class Compiler:
         # --- Condition ---
         self.builder.position_at_start(cond_bb)
         test, _ = self.__resolve_value(node.condition)
-        if test is None:
-            return None
         self.builder.cbranch(test, body_bb, end_bb)
 
         # --- Body ---
@@ -372,8 +360,6 @@ class Compiler:
                 resolved_types.append(None)
                 continue
             typ = self.__resolve_type(tname)
-            if typ is None:
-                raise TypeError(f"unknown type `{tname}` for union `{name}`")
             resolved_types.append(typ)
         
         identified = ir.global_context.get_identified_type(name) # type: ignore
@@ -393,11 +379,7 @@ class Compiler:
         operator = node.operator
         left_value, left_type = self.__resolve_value(node.left_node)
         right_value, right_type = self.__resolve_value(node.right_node)
-        if left_value is None or left_type is None or right_value is None or right_type is None:
-            raise ValueResolverError(f"couldn't resolve value in\n{node.json()}")
 
-        value: Optional[ir.Instruction] = None
-        typ: Optional[ir.Type] = None
         if isinstance(right_type, ir.IntType) and isinstance(left_type, ir.IntType):
             typ = self.type_map['i32']
             match operator:
@@ -475,7 +457,7 @@ class Compiler:
                 
         return value, typ
     
-    def __visit_block_expression(self, node: BlockExpression) -> tuple[Optional[ir.Value], Optional[ir.Type]]:
+    def __visit_block_expression(self, node: BlockExpression) -> tuple[ir.Value, ir.Type]:
         for stmt in node.statements:
             self.compile(stmt)
 
@@ -484,10 +466,8 @@ class Compiler:
         else:
             return ir.Constant(self.type_map["i32"], 0), self.type_map["i32"]
     
-    def __visit_if_expression(self, node: IfExpression) -> tuple[Optional[ir.Value], Optional[ir.Type]]:
+    def __visit_if_expression(self, node: IfExpression) -> tuple[ir.Value, ir.Type]:
         cond_val, cond_type = self.__resolve_value(node.condition)
-        if cond_val is None or cond_type is None:
-            return None, None
 
         # normalize cond -> i1
         if isinstance(cond_type, ir.IntType) and cond_type.width != 1:
@@ -533,16 +513,6 @@ class Compiler:
         # --- merge block ---
         self.builder.position_at_end(merge_bb)
 
-        # If both branches produced no value, the if expression yields no value:
-        if (then_type is None) and (else_type is None):
-            return None, None
-
-        # Normalize types and defaults (your existing logic)
-        if then_type is None and else_type is not None:
-            then_type = else_type
-        if else_type is None and then_type is not None:
-            else_type = then_type
-
         if type(then_type) is not type(else_type):
             raise TypeError("Mismatched types in if branches")
 
@@ -551,8 +521,6 @@ class Compiler:
         incoming_values: list[ir.Value] = []
 
         if then_block_for_phi is not None:
-            if then_val is None:
-                then_val = ir.Constant(then_type, 0 if isinstance(then_type, ir.IntType) else 0.0)
             incoming_blocks.append(then_block_for_phi)
             incoming_values.append(then_val)
 
@@ -582,8 +550,6 @@ class Compiler:
         types: list[ir.Type] = []
         for param in params:
             p_val, p_typ = self.__resolve_value(param)
-            if p_val is None or p_typ is None:
-                raise ValueResolverError(f"couldn't resolve\n{node.json()}")
             args.append(p_val)
             types.append(p_typ)
 
@@ -619,8 +585,6 @@ class Compiler:
 
         if op == '*':
             ptr_to_ptr, ptr_type = self.__resolve_value(node.right_node, return_pointer=True)
-            if ptr_to_ptr is None or ptr_type is None:
-                raise ValueResolverError(f"couldn't resolve\n{node.right_node}")
             if not isinstance(ptr_type, ir.PointerType):
                 raise TypeMismatchError("dereferencing a non-pointer")
             ptr = self.builder.load(ptr_to_ptr)
@@ -628,8 +592,6 @@ class Compiler:
             return value, ptr_type.pointee
 
         val, typ = self.__resolve_value(node.right_node)
-        if val is None or typ is None:
-            raise ValueResolverError(f"couldn't resolve\n{node.right_node}")
         if isinstance(typ, ir.FloatType):
             if op == '-':
                 return self.builder.fmul(val, ir.Constant(ir.FloatType(), -1.0)), typ
@@ -652,8 +614,6 @@ class Compiler:
 
         for i, (field_expr, expected_type) in enumerate(zip((f[1] for f in node.fields), field_types)):
             val, val_type = self.__resolve_value(field_expr)
-            if val is None or val_type is None:
-                raise ValueResolverError(f"couldn't resolve\n{field_expr}")
 
             if isinstance(val_type, ir.PointerType):
                 val = self.builder.load(val)
@@ -670,8 +630,6 @@ class Compiler:
 
     def __visit_field_access_expression(self, node: FieldAccessExpression, return_pointer: bool = False) -> tuple[ir.Value, ir.Type]:
         base_val, base_type = self.__resolve_value(node.base, return_pointer=True)
-        if base_val is None or base_type is None:
-            raise ValueResolverError(f"couldn't resolve value of\n{node.base}")
         
         if isinstance(base_type, ir.PointerType) and isinstance(base_type.pointee, ir.IdentifiedStructType):
             struct_ptr = base_val
@@ -735,11 +693,7 @@ class Compiler:
             raise ValueResolverError(f"variant `{node.variant.value}` of `{node.name.value}` expects a payload")
 
         payload_val, payload_typ = self.__resolve_value(node.value)
-        if payload_val is None or payload_typ is None:
-            raise ValueResolverError("couldn't resolve union payload expression")
         
-        payload_ptr_val: Optional[ir.Value] = None
-
         if isinstance(payload_typ, ir.PointerType) and payload_typ.pointee == expected_type:
             payload_ptr_val = payload_val
         elif payload_typ == expected_type:
@@ -758,8 +712,6 @@ class Compiler:
 
     def __visit_match_expression(self, node: MatchExpression) -> tuple[ir.Value, ir.Type]:
         value, typ = self.__resolve_value(node.match)
-        if value is None or typ is None:
-            raise ValueResolverError
         if typ != ir.IntType(32):
             # union or illegal
             return self.__visit_match_expression_union(node)
@@ -783,10 +735,6 @@ class Compiler:
             self.builder.position_at_start(block)
 
             result, result_ty = self.__visit_block_expression(block_expression)
-            if result is None:
-                result = ir.Constant(ir.IntType(32), 0)
-            if result_ty is None:
-                result_ty = ir.IntType(32)
             blocks.append((variant_value, block, result, result_ty))
 
         end = fn.append_basic_block(f"switch_{counter}_end")
@@ -812,8 +760,6 @@ class Compiler:
     def __visit_match_expression_union(self, node: MatchExpression) -> tuple[ir.Value, ir.Type]:
         # Resolve the union value
         union_val, union_type = self.__resolve_value(node.match)
-        if union_val is None or union_type is None:
-            raise ValueResolverError("could not resolve union in match expression")
         
         # If passed a pointer, load the struct
         is_ptr = isinstance(union_type, ir.PointerType)
@@ -869,10 +815,6 @@ class Compiler:
 
             # Visit the block
             result_val, result_ty = self.__visit_block_expression(block_expr)
-            if result_val is None:
-                result_val = ir.Constant(ir.IntType(32), 0)
-            if result_ty is None:
-                result_ty = ir.IntType(32)
 
             # Branch to end block if not already terminated
             if not self.builder.block.is_terminated:
@@ -906,7 +848,7 @@ class Compiler:
     # region Helper Methods
     def __resolve_value(
         self, node: Expression, value_type: Optional[str] = None, return_pointer: bool = False
-    ) -> tuple[Optional[ir.Value], Optional[ir.Type]]:
+    ) -> tuple[ir.Value, ir.Type]:
         match node.type():
             case NodeType.I32Literal:
                 typ = self.type_map['i32' if value_type is None else value_type]
@@ -1012,13 +954,11 @@ class Compiler:
             node.statements.append(ReturnStatement(node.return_expression))
             node.return_expression = None
     
-    def __resolve_type(self, name: str) -> Optional[ir.Type]:
+    def __resolve_type(self, name: str) -> ir.Type:
         if name.startswith('&'):
             # Pointer
             inner_name = name[1:]
             inner = self.__resolve_type(inner_name)
-            if inner is None:
-                return None
             return ir.PointerType(inner)
         elif name in self.type_map:
             # Primitive
@@ -1029,8 +969,18 @@ class Compiler:
             if struct is not None:
                 return struct
             
+            # Enum
+            enum = self.env.lookup_enum(name)
+            if enum is not None:
+                return ir.IntType(32)
+            
+            # Union
+            union = self.env.lookup_union(name)
+            if union is not None:
+                return union.llvm_struct
+            
             # None found
-            return None
+            raise TypeNotFoundError(f"couldn't resolve type of `{name}`")
 
     def __define_struct(
         self, name: str, field_names: list[str], field_type_names: list[str]
@@ -1042,9 +992,6 @@ class Compiler:
         resolved_types: list[ir.Type] = []
         for tname in field_type_names:
             typ = self.__resolve_type(tname)
-            if typ is None:
-                raise TypeError(f"unknown field type '{tname}' for struct '{name}'")
-            
             resolved_types.append(typ)
 
         identified.set_body(*resolved_types)
