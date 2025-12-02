@@ -58,6 +58,7 @@ class Parser:
             TokenType.IF: self.__parse_if_expression,
             TokenType.TRUE: self.__parse_boolean,
             TokenType.FALSE: self.__parse_boolean,
+            TokenType.NULL: lambda: NullLiteral(),
             TokenType.STRING: self.__parse_string_literal,
             TokenType.MINUS: self.__parse_prefix_expression,
             TokenType.BANG: self.__parse_prefix_expression,
@@ -132,6 +133,9 @@ class Parser:
     
     def __peek_error(self, tt: TokenType) -> None:
         raise self.peek_token.add_exception_info(ExpectedTokenError(f"expected next token to be {tt}, got {self.peek_token.type}"))
+    
+    def __current_error(self, tt: TokenType) -> None:
+        raise self.peek_token.add_exception_info(ExpectedTokenError(f"expected current token to be {tt}, got {self.current_token.type}"))
 
     def __no_prefix_parse_fn_error(self, token: Token) -> None:
         raise token.add_exception_info(MissingPrefixParseFunction(f"no prefix parse function for {token.type} found"))
@@ -328,34 +332,23 @@ class Parser:
     def __parse_struct_statement(self) -> StructStatement:
         self.__expect_peek(TokenType.IDENT)
         ident = IdentifierLiteral(self.current_token.literal)
-
         self.__expect_peek(TokenType.LBRACE)
-
         fields: list[tuple[str, str]] = []
-
         self.__next_token()
 
         while not self.__current_token_is(TokenType.RBRACE) and not self.__current_token_is(TokenType.EOF):
             if not self.__current_token_is(TokenType.IDENT):
-                self.__peek_error(TokenType.IDENT)
+                self.__current_error(TokenType.IDENT)
             field_name = self.current_token.literal
-
             self.__expect_peek(TokenType.COLON)
             self.__next_token()
-
-            if not (self.__current_token_is(TokenType.TYPE) or self.__current_token_is(TokenType.IDENT)):
-                self.__peek_error(TokenType.TYPE)
-            field_type = self.current_token.literal
-
+            field_type = self.__parse_type()
             fields.append((field_name, field_type))
-
             self.__expect_peek(TokenType.SEMICOLON)
-
             self.__next_token()
 
         if not self.__current_token_is(TokenType.RBRACE):
             self.__expect_peek(TokenType.RBRACE)
-
         return StructStatement(ident, fields)
 
     def __parse_enum_statement(self) -> EnumStatement:
@@ -680,6 +673,17 @@ class Parser:
 
         self.__next_token()
         return MatchExpression(match_expr, cases)
+    
+    def __parse_type(self) -> str:
+        if self.__current_token_is(TokenType.TYPE) or self.__current_token_is(TokenType.IDENT):
+            field_type = self.current_token.literal
+        elif self.__current_token_is(TokenType.AMPERSAND):
+            self.__next_token()
+            field_type = "&" + self.__parse_type()
+        else:
+            raise ParserException(f"couldn't parse token `{self.current_token}` as type")
+        
+        return field_type
     # endregion
 
     # region Prefix Methods

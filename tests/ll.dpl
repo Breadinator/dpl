@@ -1,0 +1,25 @@
+struct Node {
+    value: i32;
+    next: &Node;
+}
+
+fn main() -> i32 {
+    let head: Node = new Node {
+        value = 10;
+        next = null;
+    };
+
+    if head.next == null {
+        printf("This should print\n");
+    } else {
+        printf("This shouldn't print\n");
+    };
+
+    let b: Node = new Node {
+        value = 5;
+        next = null;
+    };
+    head.next = &b;
+    printf("%i\n", head.next.value);
+    0
+}

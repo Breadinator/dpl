@@ -61,6 +61,7 @@ class TokenType(Enum):
     ELSE = "ELSE"
     TRUE = "TRUE"
     FALSE = "FALSE"
+    NULL = "NULL"
     WHILE = "WHILE"
     FOR = "FOR"
     CONTINUE = "CONTINUE"
@@ -101,6 +102,7 @@ KEYWORDS: dict[str, TokenType] = {
     "else": TokenType.ELSE,
     "True": TokenType.TRUE,
     "False": TokenType.FALSE,
+    "null": TokenType.NULL,
     "while": TokenType.WHILE,
     "for": TokenType.FOR,
     "continue": TokenType.CONTINUE,

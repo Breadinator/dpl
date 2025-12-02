@@ -38,6 +38,7 @@ class NodeType(Enum):
     IdentifierLiteral = "IdentifierLiteral"
     BooleanLiteral = "BooleanLiteral"
     StringLiteral = "StringLiteral"
+    NullLiteral = "NullLiteral"
 
     # Helper
     FunctionParameter = "FunctionParameter"
@@ -510,5 +511,14 @@ class StringLiteral(Expression):
         return {
             "type": self.type().value,
             "value": self.value
+        }
+    
+class NullLiteral(Expression):
+    def type(self) -> NodeType:
+        return NodeType.NullLiteral
+    
+    def json(self) -> dict[str, Any]:
+        return {
+            "type": self.type().value,
         }
 # endregion

@@ -52,6 +52,12 @@ class Compiler:
             self.env.define_record('False', false_var, false_var.type)
         define_bools()
 
+        def define_null():
+            null_var = ir.GlobalVariable(self.module, ir.PointerType(ir.IntType(8)), 'null')
+            null_var.initializer = ir.Constant(ir.PointerType(ir.IntType(8)), None)
+            null_var.global_constant = True
+        define_null()
+
         def define_printf():
             fnty = ir.FunctionType(
                 self.type_map['i32'],
@@ -130,29 +136,36 @@ class Compiler:
         store_type = self.__resolve_type(node.value_type)
         
         rhs_val, rhs_type = self.__resolve_value(node.value)
-        
-        if isinstance(store_type, ir.PointerType):
-            var_ptr = self.builder.alloca(store_type)
-            if not isinstance(rhs_val.type, ir.PointerType):
-                raise TypeMismatchError(f"Cannot store non-pointer {rhs_val.type} into reference type {store_type}")
-            self.builder.store(rhs_val, var_ptr)
-            self.env.define_record(name, var_ptr, store_type)
-            return
-        
-        if isinstance(rhs_type, ir.PointerType) and (not isinstance(store_type, ir.PointerType)):
-            rhs_val = self.builder.load(rhs_val)
-            rhs_type = rhs_type.pointee
 
-        if store_type and store_type != rhs_type:
+        # Special handling for null literals
+        if isinstance(node.value, NullLiteral) and isinstance(store_type, ir.PointerType):
+            rhs_val = self.__normalize_ptr(rhs_val, store_type)
+            rhs_type = store_type
+
+        # If the variable expects a pointer but RHS is not a pointer, it's a mismatch
+        elif isinstance(store_type, ir.PointerType) and not isinstance(rhs_type, ir.PointerType):
+            raise TypeMismatchError(f"Cannot store non-pointer {rhs_type} into reference type {store_type}")
+
+        # If RHS is a pointer but variable expects non-pointer, load the value
+        elif isinstance(rhs_type, ir.PointerType) and not isinstance(store_type, ir.PointerType):
+            rhs_val = self.builder.load(rhs_val)
+            rhs_type = rhs_val.type
+
+        # For structs/unions: allow pointer assignment if compatible
+        elif isinstance(store_type, ir.PointerType) and isinstance(rhs_type, ir.PointerType):
+            if store_type.pointee != rhs_type.pointee:
+                rhs_val = self.builder.bitcast(rhs_val, store_type)
+
+        # Final type check
+        if store_type != rhs_type:
             raise TypeMismatchError(
                 f"cannot store value of type `{rhs_type}` into variable `{name}` of type `{store_type}`"
             )
 
-        alloc_type = store_type
-        var_ptr = self.builder.alloca(alloc_type)
-
+        var_ptr = self.builder.alloca(store_type)
         self.builder.store(rhs_val, var_ptr)
-        self.env.define_record(name, var_ptr, alloc_type, node.const, False)
+        self.env.define_record(name, var_ptr, store_type, node.const, False)
+
 
     def __visit_return_statement(self, node: ReturnStatement) -> None:
         value = node.return_value
@@ -335,7 +348,7 @@ class Compiler:
     
     def __visit_struct_statement(self, node: StructStatement) -> None:
         name = node.ident.value
-        existing_struct, _, _ = self.env.lookup_struct(name)
+        existing_struct = self.env.lookup_struct(name)
         if existing_struct is not None:
             raise CompilerException(f"struct `{name}` already defined")
         field_names = [f[0] for f in node.fields]
@@ -448,6 +461,17 @@ class Compiler:
                     value = self.builder.fcmp_ordered('!=', left_value, right_value)
                     typ = ir.IntType(1)
 
+                case _:
+                    raise NotImplementedError
+        elif isinstance(right_type, ir.PointerType) and isinstance(left_type, ir.PointerType):
+            typ = left_type
+            match operator:
+                case '==':
+                    value = self.builder.icmp_signed('==', left_value, right_value)
+                    typ = ir.IntType(1)
+                case '!=':
+                    value = self.builder.icmp_signed('!=', left_value, right_value)
+                    typ = ir.IntType(1)
                 case _:
                     raise NotImplementedError
         else:
@@ -604,16 +628,20 @@ class Compiler:
 
     def __visit_new_struct_expression(self, node: NewStructExpression) -> tuple[ir.Value, ir.Type]:
         name = node.struct_ident.value
-        struct_type, field_names, field_types = self.env.lookup_struct(name)
-        if struct_type is None or field_names is None or field_types is None:
+        struct_metadata = self.env.lookup_struct(name)
+        if struct_metadata is None:
             raise LookupError(f"struct `{name}` not defined")
+        struct_type, field_names, field_types = struct_metadata.llvm_struct, struct_metadata.field_names, struct_metadata.field_types
 
         ptr = self.builder.alloca(struct_type)
 
         for i, (field_expr, expected_type) in enumerate(zip((f[1] for f in node.fields), field_types)):
             val, val_type = self.__resolve_value(field_expr)
 
-            if isinstance(val_type, ir.PointerType):
+            if isinstance(field_expr, NullLiteral) and isinstance(expected_type, ir.PointerType):
+                val = self.__normalize_ptr(val, expected_type)
+                val_type = expected_type
+            elif isinstance(val_type, ir.PointerType):
                 val = self.builder.load(val)
                 val_type = val.type
 
@@ -628,26 +656,23 @@ class Compiler:
 
     def __visit_field_access_expression(self, node: FieldAccessExpression, return_pointer: bool = False) -> tuple[ir.Value, ir.Type]:
         base_val, base_type = self.__resolve_value(node.base, return_pointer=True)
-        
-        if isinstance(base_type, ir.PointerType) and isinstance(base_type.pointee, ir.IdentifiedStructType):
-            struct_ptr = base_val
-            struct_type = base_type.pointee
-        elif isinstance(base_type, ir.IdentifiedStructType):
-            struct_ptr = base_val
-            struct_type = base_type
-        else:
-            raise TypeError(f"cannot access field on non-struct type {base_type}")
+        while isinstance(base_type, ir.PointerType):
+            base_val = self.builder.load(base_val)
+            base_type = base_type.pointee
 
-        struct_def, field_names, field_types = self.env.lookup_struct(struct_type.name)
-        if struct_def is None or field_names is None or field_types is None:
-            raise LookupError(f"struct `{struct_type.name}` not found")
+        if not isinstance(base_type, ir.IdentifiedStructType):
+            raise CompilerException("cannot access field on non-struct type")
+
+        struct_metadata = self.env.lookup_struct(base_type.name)
+        if struct_metadata is None:
+            raise LookupError(f"struct `{base_type.name}` not defined")
+        _, field_names, field_types = struct_metadata.llvm_struct, struct_metadata.field_names, struct_metadata.field_types
 
         idx = field_names.index(node.field.value)
-        field_ptr = self.builder.gep(struct_ptr, [ir.Constant(ir.IntType(32), 0),
-                                                ir.Constant(ir.IntType(32), idx)])
+        field_ptr = self.builder.gep(base_val, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), idx)])
 
         if return_pointer:
-            return field_ptr, field_types[idx] if not isinstance(field_types[idx], ir.PointerType) else field_types[idx]
+            return field_ptr, field_types[idx]
         else:
             return self.builder.load(field_ptr), field_types[idx]
 
@@ -876,6 +901,8 @@ class Compiler:
                     return loaded, loaded.type
                 else:
                     return loaded, typ
+            case NodeType.NullLiteral:
+                return ir.Constant(ir.PointerType(ir.IntType(8)), None), ir.PointerType(ir.IntType(8))
             
             case NodeType.InfixExpression:
                 return self.__visit_infix_expression(node) # pyright: ignore[reportArgumentType]
@@ -961,9 +988,9 @@ class Compiler:
             return self.type_map[name]
         else:
             # Struct
-            struct, _, _ = self.env.lookup_struct(name)
-            if struct is not None:
-                return struct
+            struct_metadata = self.env.lookup_struct(name)
+            if struct_metadata is not None:
+                return struct_metadata.llvm_struct
             
             # Enum
             enum = self.env.lookup_enum(name)
@@ -982,6 +1009,7 @@ class Compiler:
         identified = ir.global_context.get_identified_type(name) # type: ignore
         if not isinstance(identified, ir.IdentifiedStructType):
             raise Exception("this is annoying")
+        self.env.define_struct(name, identified, [], [])
 
         resolved_types: list[ir.Type] = []
         for tname in field_type_names:
@@ -992,4 +1020,10 @@ class Compiler:
         
         self.env.define_struct(name, identified, field_names, resolved_types)
         return identified
+    
+    def __normalize_ptr(self, val: ir.Value, target_type: ir.PointerType) -> ir.Value:
+        if val.type != target_type:
+            return self.builder.bitcast(val, target_type)
+        else:
+            return val
     # endregion

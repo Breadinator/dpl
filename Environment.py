@@ -10,6 +10,13 @@ class RecordMetadata:
     is_func: bool = False
 
 @dataclass
+class StructMetadata:
+    name: str
+    llvm_struct: ir.IdentifiedStructType
+    field_names: list[str]
+    field_types: list[ir.Type]
+
+@dataclass
 class EnumMetadata:
     name: str
     variants: list[str]
@@ -24,7 +31,7 @@ class UnionMetadata:
 @dataclass
 class Environment:
     records: dict[str, RecordMetadata] = field(default_factory=lambda: {})
-    structs: dict[str, tuple[ir.BaseStructType, list[str], list[ir.Type]]] = field(default_factory=lambda: {})
+    structs: dict[str, StructMetadata] = field(default_factory=lambda: {})
     enums: dict[str, EnumMetadata] = field(default_factory=lambda: {})
     unions: dict[str, UnionMetadata] = field(default_factory=lambda: {})
     parent: Optional['Environment'] = field(default=None)
@@ -45,17 +52,17 @@ class Environment:
         else:
             return None
 
-    def define_struct(self, name: str, llvm_struct: ir.BaseStructType, field_names: list[str], field_types: list[ir.Type]) -> ir.BaseStructType:
-        self.structs[name] = (llvm_struct, field_names, field_types)
+    def define_struct(self, name: str, llvm_struct: ir.IdentifiedStructType, field_names: list[str], field_types: list[ir.Type]) -> ir.IdentifiedStructType:
+        self.structs[name] = StructMetadata(name, llvm_struct, field_names, field_types)
         return llvm_struct
 
-    def lookup_struct(self, name: str) -> tuple[Optional[ir.BaseStructType], Optional[list[str]], Optional[list[ir.Type]]]:
+    def lookup_struct(self, name: str) -> Optional[StructMetadata]:
         if name in self.structs:
             return self.structs[name]
         elif self.parent:
             return self.parent.lookup_struct(name)
         else:
-            return None, None, None
+            return None
         
     def define_enum(
         self,
