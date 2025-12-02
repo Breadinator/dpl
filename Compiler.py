@@ -80,8 +80,6 @@ class Compiler:
                 self.__visit_function_statement(node) # pyright: ignore[reportArgumentType]
             case NodeType.ReturnStatement:
                 self.__visit_return_statement(node) # pyright: ignore[reportArgumentType]
-            case NodeType.AssignStatement:
-                self.__visit_assign_statement(node) # pyright: ignore[reportArgumentType]
             case NodeType.WhileStatement:
                 self.__visit_while_statement(node) # pyright: ignore[reportArgumentType]
             case NodeType.ForStatement:
@@ -112,6 +110,8 @@ class Compiler:
                 self.__visit_field_access_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.MatchExpression:
                 self.__visit_match_expression(node) # pyright: ignore[reportArgumentType]
+            case NodeType.AssignStatement:
+                self.__visit_assign_expression(node) # pyright: ignore[reportArgumentType]
 
             case _:
                 raise NotImplementedError(node.type().name)
@@ -202,57 +202,63 @@ class Compiler:
         self.env.define_record(name, func, return_type, True, True)
         self.builder = previous_builder
 
-    def __visit_assign_statement(self, node: AssignStatement) -> None:
-        name = node.ident.value
-        value = node.rh
-        operator = node.operator
+    def __visit_assign_expression(self, node: AssignExpression) -> tuple[ir.Value, ir.Type]:
+        left_ptr, left_type = self.__resolve_value(node.lh, return_pointer=True)
+        if not isinstance(left_ptr.type, ir.PointerType):
+            raise CompilerException("Cannot assign to non-lvalue expression")
+        right_value, right_type = self.__resolve_value(node.rh)
+        if node.operator != '=':
+            current_value = self.builder.load(left_ptr)
+            current_type = current_value.type
+            if current_type != right_type:
+                raise TypeError(f"Cannot apply compound assignment {node.operator} between types {current_type} and {right_type}")
+            if isinstance(current_type, ir.IntType):
+                match node.operator:
+                    case '+=':
+                        result = self.builder.add(current_value, right_value)
+                    case '-=':
+                        result = self.builder.sub(current_value, right_value)
+                    case '*=':
+                        result = self.builder.mul(current_value, right_value)
+                    case '/=':
+                        result = self.builder.sdiv(current_value, right_value)
+                    case _:
+                        raise ValueError(f"Unsupported compound assignment operator: {node.operator}")
+            elif isinstance(current_type, ir.FloatType):
+                match node.operator:
+                    case '+=':
+                        result = self.builder.fadd(current_value, right_value)
+                    case '-=':
+                        result = self.builder.fsub(current_value, right_value)
+                    case '*=':
+                        result = self.builder.fmul(current_value, right_value)
+                    case '/=':
+                        result = self.builder.fdiv(current_value, right_value)
+                    case _:
+                        raise ValueError(f"Unsupported compound assignment operator: {node.operator}")
+            else:
+                raise TypeError(f"Compound assignment not supported for type {current_type}")
+            self.builder.store(result, left_ptr)
+        else:  # Simple assignment '='
+            if isinstance(left_type, ir.PointerType):
+                if isinstance(right_type, ir.PointerType):
+                    if left_type.pointee != right_type.pointee:
+                        raise TypeError(f"Cannot assign pointer to {right_type.pointee} to pointer to {left_type.pointee}")
+                    self.builder.store(right_value, left_ptr)
+                else:
+                    if right_type != left_type.pointee:
+                        raise TypeError(f"Cannot assign value of type {right_type} to location expecting {left_type.pointee}")
+                    self.builder.store(right_value, left_ptr)
+            else:
+                if isinstance(right_type, ir.PointerType):
+                    right_value = self.builder.load(right_value)
+                    right_type = right_value.type
+                if left_type != right_type:
+                    raise TypeError(f"Cannot assign value of type {right_type} to location of type {left_type}")
 
-        var = self.env.lookup_record(name)
-        if var is None:
-            raise CompilerException(f"identifier `{name}` reassigned before declaration")
-        if var.is_const:
-            raise ReassignConstError(f"tried to reassign const `{name}`")
-        var_ptr = var.value
- 
-        right_value, right_type = self.__resolve_value(value)
-        
-        orig_value = self.builder.load(var_ptr)
-        if right_type != orig_value.type:
-            raise TypeError("mismatched types in infix operator")
-        
-        value = None
-        match operator:
-            case '=':
-                value = right_value
-            case '+=':
-                if isinstance(orig_value.type, ir.IntType) and isinstance(right_type, ir.IntType):
-                    value = self.builder.add(orig_value, right_value)
-                else:
-                    value = self.builder.fadd(orig_value, right_value)
-            case '-=':
-                if isinstance(orig_value.type, ir.IntType) and isinstance(right_type, ir.IntType):
-                    value = self.builder.sub(orig_value, right_value)
-                else:
-                    value = self.builder.fsub(orig_value, right_value)
-            case '*=':
-                if isinstance(orig_value.type, ir.IntType) and isinstance(right_type, ir.IntType):
-                    value = self.builder.mul(orig_value, right_value)
-                else:
-                    value = self.builder.fmul(orig_value, right_value)
-            case '/=':
-                if isinstance(orig_value.type, ir.IntType) and isinstance(right_type, ir.IntType):
-                    value = self.builder.sdiv(orig_value, right_value)
-                else:
-                    value = self.builder.fdiv(orig_value, right_value)
-            case _:
-                raise ValueError("Unsupported assignment operator")
-        
-        ptr_record = self.env.lookup_record(name)
-        if ptr_record is None:
-            return None
-        ptr = ptr_record.value
-        self.builder.store(value, ptr)
-
+                self.builder.store(right_value, left_ptr)
+        return left_ptr, left_type
+    
     def __visit_while_statement(self, node: WhileStatement) -> None:
         test, _ = self.__resolve_value(node.condition)
 
@@ -894,8 +900,6 @@ class Compiler:
 
             case _:
                 raise NotImplementedError(f"not implemented: {node.type().name}")
-
-
     
     def __convert_string(self, string: str) -> tuple[ir.Value, ir.Type]:
         string = string.replace("\\n", "\n")
@@ -974,9 +978,7 @@ class Compiler:
             # None found
             raise TypeNotFoundError(f"couldn't resolve type of `{name}`")
 
-    def __define_struct(
-        self, name: str, field_names: list[str], field_type_names: list[str]
-    ) -> ir.IdentifiedStructType:
+    def __define_struct(self, name: str, field_names: list[str], field_type_names: list[str]) -> ir.IdentifiedStructType:
         identified = ir.global_context.get_identified_type(name) # type: ignore
         if not isinstance(identified, ir.IdentifiedStructType):
             raise Exception("this is annoying")

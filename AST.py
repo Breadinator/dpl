@@ -157,23 +157,6 @@ class FunctionStatement(Statement):
             "parameters": [p.json() for p in self.params],
             "body": self.body.json(),
         }
-
-class AssignStatement(Statement):
-    def __init__(self, ident: 'IdentifierLiteral', rh: Expression, operator: str = "") -> None:
-        self.ident = ident
-        self.rh = rh
-        self.operator = operator
-    
-    def type(self) -> NodeType:
-        return NodeType.AssignStatement
-    
-    def json(self) -> dict[str, Any]:
-        return {
-            "type": self.type().value,
-            "ident": self.ident.json(),
-            "rh": self.rh.json(),
-            "operator": self.operator,
-        }
     
 class WhileStatement(Statement):
     def __init__(self, condition: Expression, body: 'BlockExpression') -> None:
@@ -215,7 +198,7 @@ class ForStatement(Statement):
         self,
         var_declaration: LetStatement,
         condition: Expression,
-        action: AssignStatement,
+        action: 'AssignExpression',
         body: 'BlockExpression',
     ) -> None:
         self.var_declaration = var_declaration
@@ -310,6 +293,23 @@ class InfixExpression(Expression):
             "left_node": self.left_node.json(),
             "operator": self.operator,
             "right_node": self.right_node.json() if self.right_node is not None else {}
+        }
+    
+class AssignExpression(Expression):
+    def __init__(self, lh: Expression, rh: Expression, operator: str = "") -> None:
+        self.lh = lh
+        self.rh = rh
+        self.operator = operator
+    
+    def type(self) -> NodeType:
+        return NodeType.AssignStatement
+    
+    def json(self) -> dict[str, Any]:
+        return {
+            "type": self.type().value,
+            "lh": self.lh.json(),
+            "rh": self.rh.json(),
+            "operator": self.operator,
         }
     
 class BlockExpression(Expression):

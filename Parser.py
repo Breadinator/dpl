@@ -36,6 +36,11 @@ PRECEDENCES: dict[TokenType, PrecedenceType] = {
     TokenType.PIPE: PrecedenceType.P_CALL,
     TokenType.DOT: PrecedenceType.P_CALL, # TODO: decide
     TokenType.DOUBLE_COLON: PrecedenceType.P_CALL, # TODO: decide
+    TokenType.EQ: PrecedenceType.P_EQUALS,
+    TokenType.PLUS_EQ: PrecedenceType.P_EQUALS,
+    TokenType.MINUS_EQ: PrecedenceType.P_EQUALS,
+    TokenType.MUL_EQ: PrecedenceType.P_EQUALS,
+    TokenType.DIV_EQ: PrecedenceType.P_EQUALS,
 }
 
 class Parser:
@@ -78,6 +83,11 @@ class Parser:
             TokenType.PIPE: self.__parse_pipe_call_expression,
             TokenType.DOT: self.__parse_field_access_expression,
             TokenType.DOUBLE_COLON: self.__parse_enum_variant_access_expression,
+            TokenType.EQ: self.__parse_assignment_expression,
+            TokenType.PLUS_EQ: self.__parse_assignment_expression,
+            TokenType.MINUS_EQ: self.__parse_assignment_expression,
+            TokenType.MUL_EQ: self.__parse_assignment_expression,
+            TokenType.DIV_EQ: self.__parse_assignment_expression,
         }
     
     # region Parser Helpers
@@ -91,16 +101,6 @@ class Parser:
     def __peek_token_is(self, tt: TokenType) -> bool:
         return self.peek_token.type == tt
     
-    def __peek_token_is_assignment(self) -> bool:
-        assignment_operators = [
-            TokenType.EQ,
-            TokenType.PLUS_EQ,
-            TokenType.MINUS_EQ,
-            TokenType.MUL_EQ,
-            TokenType.DIV_EQ,
-        ]
-        return self.peek_token.type in assignment_operators
-
     def __expect_peek(self, tt: TokenType):
         if self.__peek_token_is(tt):
             self.__next_token()
@@ -150,9 +150,6 @@ class Parser:
 
     # region Statement Methods
     def __parse_statement(self) -> Statement:
-        if self.__current_token_is(TokenType.IDENT) and self.__peek_token_is_assignment():
-            return self.__parse_assignment_statement()
-
         match self.current_token.type:
             case TokenType.LET:
                 return self.__parse_let_statement()
@@ -290,18 +287,7 @@ class Parser:
         stmt_return_value = self.__parse_expression(PrecedenceType.P_LOWEST)
         self.__expect_peek(TokenType.SEMICOLON)
         return ReturnStatement(stmt_return_value)
-    
-    def __parse_assignment_statement(self) -> AssignStatement:
-        ident = IdentifierLiteral(self.current_token.literal)
-        self.__next_token() # skip ident
-
-        operator = self.current_token.literal
-        self.__next_token()
-
-        rh = self.__parse_expression(PrecedenceType.P_LOWEST)
-        self.__next_token()
-        return AssignStatement(ident, rh, operator)
-    
+   
     def __parse_while_statement(self) -> WhileStatement:
         self.__next_token()
         condition = self.__parse_expression(PrecedenceType.P_LOWEST)
@@ -318,7 +304,7 @@ class Parser:
         condition = self.__parse_expression(PrecedenceType.P_LOWEST)
         self.__expect_peek(TokenType.SEMICOLON)
         self.__next_token() # skip ;
-        action = self.__parse_assignment_statement()
+        action = self.__parse_assignment_expression(self.__parse_expression(PrecedenceType.P_LOWEST))
         if self.__peek_token_is(TokenType.RPAREN):
             self.__next_token()
         self.__expect_peek(TokenType.LBRACE)
@@ -446,7 +432,14 @@ class Parser:
         self.__next_token()
         right_node = self.__parse_expression(precedence)
         return InfixExpression(left_node, operator, right_node)
-    
+ 
+    def __parse_assignment_expression(self, lh: Expression) -> AssignExpression:
+        operator = self.current_token.literal
+        precedence = self.__current_precedence()
+        self.__next_token()
+        rh = self.__parse_expression(precedence)
+        return AssignExpression(lh, rh, operator)
+
     def __parse_grouped_expression(self) -> Expression:
         self.__next_token()
         expr = self.__parse_expression(PrecedenceType.P_LOWEST)
@@ -472,13 +465,15 @@ class Parser:
                 else:
                     expr.return_expression = stmt.expr
                     break
-
-            expr.statements.append(stmt)
-
-            if self.__current_token_is(TokenType.SEMICOLON):
-                self.__next_token()
+            elif isinstance(stmt, ReturnStatement):
+                expr.statements.append(stmt)
+                if self.__current_token_is(TokenType.SEMICOLON):
+                    self.__next_token()
+                break
             else:
-                self.__next_token()
+                expr.statements.append(stmt)
+                if self.__current_token_is(TokenType.SEMICOLON):
+                    self.__next_token()
 
         if not self.__current_token_is(TokenType.RBRACE):
             self.__expect_peek(TokenType.RBRACE)

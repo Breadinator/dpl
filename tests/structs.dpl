@@ -1,0 +1,16 @@
+struct Point {
+    x: i32;
+    y: i32;
+}
+
+fn main() -> i32 {
+    let p: Point = new Point {
+        x = 10;
+        y = 5;
+    };
+    p.x = 7;
+    printf("%i\n", p.x);
+    p.y += 10;
+    printf("%i\n", p.y);
+    0
+}
