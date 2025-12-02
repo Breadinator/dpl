@@ -1,59 +1,24 @@
-import json
 import logging
-import os
 from pathlib import Path
 import sys
-import subprocess
-import llvmlite.binding as llvm
+import argparse
 
-from Lexer import Lexer
-from Parser import Parser
-from Compiler import Compiler
-from TypeChecker import TypeChecker
+from Builder import *
 
-def main(path: str, lexer_debug: bool, check: bool):
+def main(path: str, check: bool):
     abs_path = Path(path).absolute()
-    dir = abs_path.parent
+    output_dir = Path("./build").absolute()
 
-    with open(abs_path, "r") as f:
-        code = f.read()
-    
-    if lexer_debug:
-        debug_lex = Lexer(code)
-        while debug_lex.current_char is not None:
-            print(debug_lex.next_token())
-        exit(0)
-
-    l = Lexer(code)
-    p = Parser(l)
-
-    program = p.parse_program()
-    logging.info("program parsed")
-    
-    if check:
-        TypeChecker(dir).type_check(program)
-        logging.info("no type errors detected")
-        exit(0)
-
-    os.makedirs("./build", exist_ok=True)
-    with open(f"build/{abs_path.stem}.ast.json", "w") as f:
-        json.dump(program.json(), f, indent=4)
-
-    c = Compiler(dir)
-    c.compile(program)
-    logging.info("program compiled")
-
-    # Output steps
-    module = c.module
-    module.triple = llvm.get_default_triple()
-
-    ir_path = f"build/{abs_path.stem}.ll"
-    with open(ir_path, "w") as f:
-        f.write(str(module))
-
-    # run clang
-    # clang build/x.ll -o build/x.exe
-    subprocess.run(["clang", ir_path, "-o", f"build/{abs_path.stem}.exe"])
+    builder = Builder(
+        input_file=abs_path,
+        input_reader=FileReader(abs_path),
+        output_writer=FileOutputWriter(abs_path.stem, output_dir),
+        llvm_compiler=ClangLLVMCompiler(output_dir),
+        type_check=check,
+        output_dir=output_dir,
+        write_ast=True,
+    )
+    builder.build()
 
 def setup_logger():
     logging.basicConfig(
@@ -61,23 +26,16 @@ def setup_logger():
         format="[%(levelname)s] %(asctime)s - %(message)s"
     )
 
-def parse_args(args: list[str]) -> tuple[str, bool, bool]:
-    path = None
-    lexer_debug = False
-    check = False
+def parse_args(args: list[str]) -> tuple[str, bool]:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("path", type=Path, help="Input file to be compiled")
+    parser.add_argument("--check", action='store_true', help="Indicates that the compiler should run static type analysis")
+    args = parser.parse_args() # pyright: ignore[reportAssignmentType]
 
-    for arg in args:
-        if arg == "--lexer_debug":
-            lexer_debug = True
-        elif arg == "--check":
-            check = True
-        else:
-            path = arg
+    path: Path = args.path # type: ignore
+    check: bool = args.check # type: ignore
 
-    if path is None:
-        logging.error("Requires path")
-        exit(1)
-    return path, lexer_debug, check
+    return path, check # type: ignore
 
 if __name__ == '__main__':
     setup_logger()

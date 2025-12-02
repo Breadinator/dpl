@@ -130,6 +130,8 @@ class Compiler:
         store_type = self.__resolve_type(node.value_type)
         
         rhs_val, rhs_type = self.__resolve_value(node.value)
+        if rhs_val is None or rhs_type is None:
+            raise ValueResolverError(f"couldn't resolve expression:\n{node.value}")
         
         if isinstance(store_type, ir.PointerType):
             var_ptr = self.builder.alloca(store_type)
@@ -166,7 +168,7 @@ class Compiler:
         self.__extract_ret(node.body)
         body = node.body
         params = node.params
-        param_names: list[str] = [p.name for p in params]
+        _param_names: list[str] = [p.name for p in params]
         param_types: list[ir.Type] = [self.type_map[p.value_type.replace('&', '')] for p in params]
         return_type = self.type_map[node.return_type]
 
@@ -380,15 +382,15 @@ class Compiler:
     # endregion
 
     # region Expressions
-    def __visit_infix_expression(self, node: InfixExpression):
+    def __visit_infix_expression(self, node: InfixExpression) -> tuple[ir.Value, ir.Type]:
         if node.right_node is None:
-            return None
+            raise CompilerException("right node is none")
 
         operator = node.operator
         left_value, left_type = self.__resolve_value(node.left_node)
         right_value, right_type = self.__resolve_value(node.right_node)
         if left_value is None or left_type is None or right_value is None or right_type is None:
-            return None
+            raise ValueResolverError(f"couldn't resolve value in\n{node.json()}")
 
         value: Optional[ir.Instruction] = None
         typ: Optional[ir.Type] = None
@@ -609,6 +611,8 @@ class Compiler:
 
         if op == '*':
             ptr_to_ptr, ptr_type = self.__resolve_value(node.right_node, return_pointer=True)
+            if ptr_to_ptr is None or ptr_type is None:
+                raise ValueResolverError(f"couldn't resolve\n{node.right_node}")
             if not isinstance(ptr_type, ir.PointerType):
                 raise TypeMismatchError("dereferencing a non-pointer")
             ptr = self.builder.load(ptr_to_ptr)
@@ -616,6 +620,8 @@ class Compiler:
             return value, ptr_type.pointee
 
         val, typ = self.__resolve_value(node.right_node)
+        if val is None or typ is None:
+            raise ValueResolverError(f"couldn't resolve\n{node.right_node}")
         if isinstance(typ, ir.FloatType):
             if op == '-':
                 return self.builder.fmul(val, ir.Constant(ir.FloatType(), -1.0)), typ
@@ -631,13 +637,15 @@ class Compiler:
     def __visit_new_struct_expression(self, node: NewStructExpression) -> tuple[ir.Value, ir.Type]:
         name = node.struct_ident.value
         struct_type, field_names, field_types = self.env.lookup_struct(name)
-        if struct_type is None:
+        if struct_type is None or field_names is None or field_types is None:
             raise LookupError(f"struct `{name}` not defined")
 
         ptr = self.builder.alloca(struct_type)
 
         for i, (field_expr, expected_type) in enumerate(zip((f[1] for f in node.fields), field_types)):
             val, val_type = self.__resolve_value(field_expr)
+            if val is None or val_type is None:
+                raise ValueResolverError(f"couldn't resolve\n{field_expr}")
 
             if isinstance(val_type, ir.PointerType):
                 val = self.builder.load(val)
@@ -654,6 +662,8 @@ class Compiler:
 
     def __visit_field_access_expression(self, node: FieldAccessExpression, return_pointer: bool = False) -> tuple[ir.Value, ir.Type]:
         base_val, base_type = self.__resolve_value(node.base, return_pointer=True)
+        if base_val is None or base_type is None:
+            raise ValueResolverError(f"couldn't resolve value of\n{node.base}")
         
         if isinstance(base_type, ir.PointerType) and isinstance(base_type.pointee, ir.IdentifiedStructType):
             struct_ptr = base_val
@@ -665,7 +675,7 @@ class Compiler:
             raise TypeError(f"cannot access field on non-struct type {base_type}")
 
         struct_def, field_names, field_types = self.env.lookup_struct(struct_type.name)
-        if struct_def is None:
+        if struct_def is None or field_names is None or field_types is None:
             raise LookupError(f"struct `{struct_type.name}` not found")
 
         idx = field_names.index(node.field.value)
@@ -892,18 +902,18 @@ class Compiler:
         match node.type():
             case NodeType.I32Literal:
                 typ = self.type_map['i32' if value_type is None else value_type]
-                return ir.Constant(typ, node.value), typ
+                return ir.Constant(typ, node.value), typ # type: ignore
             case NodeType.F32Literal:
                 typ = self.type_map['f32' if value_type is None else value_type]
-                return ir.Constant(typ, node.value), typ
+                return ir.Constant(typ, node.value), typ # type: ignore
             case NodeType.BooleanLiteral:
-                return ir.Constant(ir.IntType(1), 1 if node.value else 0), ir.IntType(1)
+                return ir.Constant(ir.IntType(1), 1 if node.value else 0), ir.IntType(1) # type: ignore
             case NodeType.StringLiteral:
-                return self.__convert_string(node.value)
+                return self.__convert_string(node.value) # type: ignore
             case NodeType.IdentifierLiteral:
-                ptr, typ = self.env.lookup(node.value)
+                ptr, typ = self.env.lookup(node.value) # type: ignore
                 if ptr is None or typ is None:
-                    raise ValueResolverError(f"identifier `{node.value}` not found")
+                    raise ValueResolverError(f"identifier `{node.value}` not found") # type: ignore
 
                 if return_pointer:
                     return ptr, typ
@@ -918,25 +928,25 @@ class Compiler:
                     return loaded, typ
             
             case NodeType.InfixExpression:
-                return self.__visit_infix_expression(node)
+                return self.__visit_infix_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.BlockExpression:
-                return self.__visit_block_expression(node)
+                return self.__visit_block_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.IfExpression:
-                return self.__visit_if_expression(node)
+                return self.__visit_if_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.CallExpression:
-                return self.__visit_call_expression(node)
+                return self.__visit_call_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.PrefixExpression:
-                return self.__visit_prefix_expression(node)
+                return self.__visit_prefix_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.NewStructExpression:
                 # Always return pointer to struct, do not load
-                return self.__visit_new_struct_expression(node)
+                return self.__visit_new_struct_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.FieldAccessExpression:
                 # Load field if it's a primitive, otherwise return pointer
-                return self.__visit_field_access_expression(node, return_pointer=return_pointer)
+                return self.__visit_field_access_expression(node, return_pointer=return_pointer) # pyright: ignore[reportArgumentType]
             case NodeType.EnumVariantAccessExpression:
-                return self.__visit_enum_variant_access_expression(node)
+                return self.__visit_enum_variant_access_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.MatchExpression:
-                return self.__visit_match_expression(node)
+                return self.__visit_match_expression(node) # pyright: ignore[reportArgumentType]
 
             case _:
                 raise NotImplementedError(f"not implemented: {node.type().name}")
@@ -1032,7 +1042,4 @@ class Compiler:
         
         self.env.define_struct(name, identified, field_names, resolved_types)
         return identified
-    
-    def __get_field_index(self, struct_type: ir.BaseStructType, field_name: str, expected_field_names: list[str]) -> int:
-        return expected_field_names.index(field_name)
     # endregion

@@ -1,0 +1,19 @@
+enum Foo {
+    Bar,
+    Baz,
+}
+
+fn main() -> i32 {
+    let foo: Foo = Foo::Bar;
+
+    match foo {
+        Foo::Bar => {
+            printf("bar\n");
+        },
+        Foo::Baz => {
+            printf("baz\n");
+        }
+    }
+
+    0
+}
