@@ -36,7 +36,7 @@ def main(path: str, lexer_debug: bool, check: bool):
         exit(0)
 
     os.makedirs("./build", exist_ok=True)
-    with open("build/ast.json", "w") as f:
+    with open(f"build/{abs_path.stem}.ast.json", "w") as f:
         json.dump(program.json(), f, indent=4)
 
     c = Compiler(dir)
@@ -47,12 +47,13 @@ def main(path: str, lexer_debug: bool, check: bool):
     module = c.module
     module.triple = llvm.get_default_triple()
 
-    with open("build/ir.ll", "w") as f:
+    ir_path = f"build/{abs_path.stem}.ll"
+    with open(ir_path, "w") as f:
         f.write(str(module))
 
     # run clang
-    # clang build/ir.ll -o build/exe.exe
-    subprocess.run(["clang", "build/ir.ll", "-o", "build/exe.exe"])
+    # clang build/x.ll -o build/x.exe
+    subprocess.run(["clang", ir_path, "-o", f"build/{abs_path.stem}.exe"])
 
 def setup_logger():
     logging.basicConfig(
@@ -80,5 +81,4 @@ def parse_args(args: list[str]) -> tuple[str, bool, bool]:
 
 if __name__ == '__main__':
     setup_logger()
-    path, lexer_debug, check = parse_args(sys.argv[1:])
-    main(path, lexer_debug, check)
+    main(*parse_args(sys.argv[1:]))
