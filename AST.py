@@ -8,6 +8,7 @@ class NodeType(Enum):
     # Statements
     ExpressionStatement = "ExpressionStatement"
     LetStatement = "LetStatement"
+    ConstStatement = "ConstStatement"
     FunctionStatement = "FunctionStatement"
     ReturnStatement = "ReturnStatement"
     AssignStatement = "AssignStatement"
@@ -101,10 +102,11 @@ class ExpressionStatement(Statement):
         }
     
 class LetStatement(Statement):
-    def __init__(self, name: 'IdentifierLiteral', value: Expression, value_type: str) -> None:
+    def __init__(self, name: 'IdentifierLiteral', value: Expression, value_type: str, const: bool = False) -> None:
         self.name = name
         self.value = value
         self.value_type = value_type
+        self.const = const
 
     def type(self) -> NodeType:
         return NodeType.LetStatement
@@ -114,9 +116,10 @@ class LetStatement(Statement):
             "type": self.type().value,
             "name": self.name.json(),
             "value": self.value.json(),
-            "value_type": self.value_type
+            "value_type": self.value_type,
+            "const": self.const,
         }
-    
+   
 class ReturnStatement(Statement):
     def __init__(self, return_value: Expression) -> None:
         self.return_value = return_value

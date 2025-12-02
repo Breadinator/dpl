@@ -19,6 +19,7 @@ union OptionI32 {
 
 fn main() -> i32 {
     let foo: i32 = 10;
+    foo = 5;
     let bar: &i32 = &foo;
     let baz: i32 = *bar;
     printf("baz = %i\n", baz);

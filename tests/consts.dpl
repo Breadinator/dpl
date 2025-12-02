@@ -1,0 +1,5 @@
+fn main() -> i32 {
+    const foo: i32 = 100;
+    printf("%i\n", foo);
+    foo
+}

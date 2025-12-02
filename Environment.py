@@ -3,6 +3,13 @@ from typing import Optional
 from dataclasses import dataclass, field
 
 @dataclass
+class RecordMetadata:
+    value: ir.Value
+    typ: ir.Type
+    is_const: bool = False
+    is_func: bool = False
+
+@dataclass
 class EnumMetadata:
     name: str
     variants: list[str]
@@ -16,27 +23,27 @@ class UnionMetadata:
 
 @dataclass
 class Environment:
-    records: dict[str, tuple[ir.Value, ir.Type]] = field(default_factory=lambda: {})
+    records: dict[str, RecordMetadata] = field(default_factory=lambda: {})
     structs: dict[str, tuple[ir.BaseStructType, list[str], list[ir.Type]]] = field(default_factory=lambda: {})
     enums: dict[str, EnumMetadata] = field(default_factory=lambda: {})
     unions: dict[str, UnionMetadata] = field(default_factory=lambda: {})
     parent: Optional['Environment'] = field(default=None)
     name: str = field(default_factory=lambda: "global")
     
-    def define(self, name: str, value: ir.Value, typ: ir.Type) -> ir.Value:
-        self.records[name] = (value, typ)
+    def define_record(self, name: str, value: ir.Value, typ: ir.Type, const: bool = False, is_func: bool = False) -> ir.Value:
+        self.records[name] = RecordMetadata(value, typ, const, is_func)
         return value
     
-    def lookup(self, name: str) -> tuple[Optional[ir.Value], Optional[ir.Type]]:
-        return self.__resolve(name)
+    def lookup_record(self, name: str) -> Optional[RecordMetadata]:
+        return self.__resolve_record(name)
 
-    def __resolve(self, name: str) -> tuple[Optional[ir.Value], Optional[ir.Type]]:
+    def __resolve_record(self, name: str) -> Optional[RecordMetadata]:
         if name in self.records:
             return self.records[name]
         elif self.parent:
-            return self.parent.__resolve(name)
+            return self.parent.__resolve_record(name)
         else:
-            return None, None
+            return None
 
     def define_struct(self, name: str, llvm_struct: ir.BaseStructType, field_names: list[str], field_types: list[ir.Type]) -> ir.BaseStructType:
         self.structs[name] = (llvm_struct, field_names, field_types)

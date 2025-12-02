@@ -48,8 +48,8 @@ class Compiler:
             false_var.initializer = ir.Constant(bool_type, 0)
             false_var.global_constant = True
 
-            self.env.define('True', true_var, true_var.type)
-            self.env.define('False', false_var, false_var.type)
+            self.env.define_record('True', true_var, true_var.type)
+            self.env.define_record('False', false_var, false_var.type)
         define_bools()
 
         def define_printf():
@@ -59,7 +59,7 @@ class Compiler:
                 var_arg=True,
             )
             fn = ir.Function(self.module, fnty, 'printf')
-            self.env.define('printf', fn, ir.IntType(32))
+            self.env.define_record('printf', fn, ir.IntType(32))
         define_printf()
 
     def __increment_counter(self) -> int:
@@ -138,7 +138,7 @@ class Compiler:
             if not isinstance(rhs_val.type, ir.PointerType):
                 raise TypeMismatchError(f"Cannot store non-pointer {rhs_val.type} into reference type {store_type}")
             self.builder.store(rhs_val, var_ptr)
-            self.env.define(name, var_ptr, store_type)
+            self.env.define_record(name, var_ptr, store_type)
             return
         
         if isinstance(rhs_type, ir.PointerType) and (not isinstance(store_type, ir.PointerType)):
@@ -154,7 +154,7 @@ class Compiler:
         var_ptr = self.builder.alloca(alloc_type)
 
         self.builder.store(rhs_val, var_ptr)
-        self.env.define(name, var_ptr, alloc_type)
+        self.env.define_record(name, var_ptr, alloc_type, node.const, False)
 
     def __visit_return_statement(self, node: ReturnStatement) -> None:
         value = node.return_value
@@ -194,16 +194,16 @@ class Compiler:
             base_type = self.type_map[param.value_type.replace('&', '')]
 
             if param.value_type.startswith('&'):
-                self.env.define(param.name, ptr, base_type.as_pointer())
+                self.env.define_record(param.name, ptr, base_type.as_pointer())
             else:
-                self.env.define(param.name, ptr, base_type)
+                self.env.define_record(param.name, ptr, base_type)
 
-        self.env.define(name, func, return_type)
+        self.env.define_record(name, func, return_type)
 
         self.compile(body)
 
         self.env = previous_env
-        self.env.define(name, func, return_type)
+        self.env.define_record(name, func, return_type, True, True)
         self.builder = previous_builder
 
     def __visit_assign_statement(self, node: AssignStatement) -> None:
@@ -211,10 +211,13 @@ class Compiler:
         value = node.rh
         operator = node.operator
 
-        var_ptr, _ = self.env.lookup(name)
-        if var_ptr is None:
+        var = self.env.lookup_record(name)
+        if var is None:
             self.errors.append(f"identifier `{name}` reassigned before declaration")
             return
+        if var.is_const:
+            raise ReassignConstError(f"tried to reassign const `{name}`")
+        var_ptr = var.value
  
         right_value, right_type = self.__resolve_value(value)
         if right_value is None:
@@ -254,9 +257,10 @@ class Compiler:
             case _:
                 raise ValueError("Unsupported assignment operator")
         
-        ptr, _ = self.env.lookup(name)
-        if ptr is None:
+        ptr_record = self.env.lookup_record(name)
+        if ptr_record is None:
             return None
+        ptr = ptr_record.value
         self.builder.store(value, ptr)
 
     def __visit_while_statement(self, node: WhileStatement) -> None:
@@ -570,7 +574,7 @@ class Compiler:
         return phi, then_type
 
 
-    def __visit_call_expression(self, node: CallExpression) -> tuple[Optional[ir.Instruction], Optional[ir.Type]]:
+    def __visit_call_expression(self, node: CallExpression) -> tuple[ir.Instruction, ir.Type]:
         name = node.function.value
         params = node.args
         
@@ -579,7 +583,7 @@ class Compiler:
         for param in params:
             p_val, p_typ = self.__resolve_value(param)
             if p_val is None or p_typ is None:
-                return None, None
+                raise ValueResolverError(f"couldn't resolve\n{node.json()}")
             args.append(p_val)
             types.append(p_typ)
 
@@ -589,9 +593,11 @@ class Compiler:
                 ret = self.builtin_printf(args, types[0]) # pyright: ignore[reportArgumentType]
                 ret_type = self.type_map['i32']
             case _:
-                func, ret_type = self.env.lookup(name)
-                if func is None:
-                    return None, None
+                record = self.env.lookup_record(name)
+                if record is None:
+                    raise LookupError(f"couldn't lookup `{name}`")
+                func = record.value
+                ret_type = record.typ
                 ret = self.builder.call(func, args)
         
         return ret, ret_type
@@ -600,9 +606,11 @@ class Compiler:
         op = node.operator
         if op == '&':
             if isinstance(node.right_node, IdentifierLiteral):
-                ptr, typ = self.env.lookup(node.right_node.value)
-                if ptr is None:
+                record = self.env.lookup_record(node.right_node.value)
+                if record is None:
                     raise ValueResolverError(f"cannot take address of undefined variable `{node.right_node.value}`")
+                ptr = record.value
+                typ = record.typ
                 return ptr, ptr.type
             if isinstance(node.right_node, FieldAccessExpression):
                 val, typ = self.__visit_field_access_expression(node.right_node, return_pointer=True)
@@ -857,7 +865,7 @@ class Compiler:
                 payload_ptr = self.builder.bitcast(val_ptr, ir.PointerType(payload_ty))
                 if not isinstance(evae.value, IdentifierLiteral):
                     raise Exception("should be literal")
-                self.env.define(evae.value.value, payload_ptr, payload_ty)
+                self.env.define_record(evae.value.value, payload_ptr, payload_ty)
 
             # Visit the block
             result_val, result_ty = self.__visit_block_expression(block_expr)
@@ -911,9 +919,11 @@ class Compiler:
             case NodeType.StringLiteral:
                 return self.__convert_string(node.value) # type: ignore
             case NodeType.IdentifierLiteral:
-                ptr, typ = self.env.lookup(node.value) # type: ignore
-                if ptr is None or typ is None:
+                record = self.env.lookup_record(node.value) # type: ignore
+                if record is None:
                     raise ValueResolverError(f"identifier `{node.value}` not found") # type: ignore
+                ptr = record.value
+                typ = record.typ
 
                 if return_pointer:
                     return ptr, typ
@@ -967,10 +977,11 @@ class Compiler:
         return ptr, ir.IntType(8).as_pointer()
 
 
-    def builtin_printf(self, params: list[ir.Value], return_type: ir.Type) -> Optional[instructions.CallInstr]:
-        func, _ = self.env.lookup('printf')
-        if func is None or len(params) == 0:
-            return None
+    def builtin_printf(self, params: list[ir.Value], return_type: ir.Type) -> instructions.CallInstr:
+        record = self.env.lookup_record('printf')
+        if record is None or len(params) == 0:
+           raise LookupError("couldn't lookup `printf` or params was none") 
+        func = record.value
 
         fmt_val = params[0]
         rest_params = params[1:]
@@ -992,11 +1003,9 @@ class Compiler:
             return self.builder.call(func, [fmt_arg, *rest_params])
 
         # Fallback: try to bitcast
-        try:
-            fmt_arg = self.builder.bitcast(fmt_val, ir.IntType(8).as_pointer())
-            return self.builder.call(func, [fmt_arg, *rest_params])
-        except Exception:
-            return None
+        # Can raise
+        fmt_arg = self.builder.bitcast(fmt_val, ir.IntType(8).as_pointer())
+        return self.builder.call(func, [fmt_arg, *rest_params])
 
     def __extract_ret(self, node: BlockExpression):
         if node.return_expression is not None:

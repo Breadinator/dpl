@@ -156,6 +156,8 @@ class Parser:
         match self.current_token.type:
             case TokenType.LET:
                 return self.__parse_let_statement()
+            case TokenType.CONST:
+                return self.__parse_const_statement()
             case TokenType.FN:
                 return self.__parse_function_statement()
             case TokenType.RETURN:
@@ -204,6 +206,25 @@ class Parser:
             self.__next_token()
         
         return LetStatement(stmt_name, stmt_value, stmt_value_type)
+    
+    def __parse_const_statement(self) -> LetStatement:
+        # const a: i32 = 10;
+        self.__expect_peek(TokenType.IDENT)
+        stmt_name = IdentifierLiteral(self.current_token.literal)
+
+        self.__expect_peek(TokenType.COLON)
+        
+        self.__expect_peek_type_name()
+        stmt_value_type = self.current_token.literal
+
+        self.__expect_peek(TokenType.EQ)
+        self.__next_token()
+        
+        stmt_value = self.__parse_expression(PrecedenceType.P_LOWEST)
+        while not self.__current_token_is(TokenType.SEMICOLON) and not self.__current_token_is(TokenType.EOF):
+            self.__next_token()
+        
+        return LetStatement(stmt_name, stmt_value, stmt_value_type, True)
     
     def __parse_function_statement(self) -> FunctionStatement:
         # fn foo() -> i32 { return 10; }
