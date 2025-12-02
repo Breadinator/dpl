@@ -26,7 +26,7 @@ class Compiler:
 
         self.env = Environment()
 
-        self.errors: list[str] = []
+        # self.errors: list[str] = []
 
         self.__initialize_builtins()
 
@@ -209,8 +209,7 @@ class Compiler:
 
         var = self.env.lookup_record(name)
         if var is None:
-            self.errors.append(f"identifier `{name}` reassigned before declaration")
-            return
+            raise CompilerException(f"identifier `{name}` reassigned before declaration")
         if var.is_const:
             raise ReassignConstError(f"tried to reassign const `{name}`")
         var_ptr = var.value
@@ -218,11 +217,8 @@ class Compiler:
         right_value, right_type = self.__resolve_value(value)
         
         orig_value = self.builder.load(var_ptr)
-        if isinstance(orig_value.type, ir.IntType) and isinstance(right_type, ir.FloatType):
-            orig_value = self.builder.sitofp(orig_value, ir.FloatType())
-        
-        if isinstance(orig_value.type, ir.FloatType) and isinstance(right_type, ir.IntType):
-            orig_value = self.builder.sitofp(right_value, ir.FloatType())
+        if right_type != orig_value.type:
+            raise TypeError("mismatched types in infix operator")
         
         value = None
         match operator:
@@ -312,7 +308,6 @@ class Compiler:
         self.breakpoints.pop()
         self.continues.pop()
         self.env = prev_env
-
     
     def __visit_break_statement(self, node: BreakStatement) -> None:
         self.builder.branch(self.breakpoints[-1])
@@ -336,12 +331,9 @@ class Compiler:
         name = node.ident.value
         existing_struct, _, _ = self.env.lookup_struct(name)
         if existing_struct is not None:
-            self.errors.append(f"struct `{name}` already defined")
-            return
-        
+            raise CompilerException(f"struct `{name}` already defined")
         field_names = [f[0] for f in node.fields]
         field_type_names = [f[1] for f in node.fields]
-
         self.__define_struct(name, field_names, field_type_names)
     
     def __visit_enum_statement(self, node: EnumStatement) -> None:
@@ -513,7 +505,7 @@ class Compiler:
         # --- merge block ---
         self.builder.position_at_end(merge_bb)
 
-        if type(then_type) is not type(else_type):
+        if then_type != else_type:
             raise TypeError("Mismatched types in if branches")
 
         # If no branch actually branched to merge, nothing to phi — return default/None
@@ -906,7 +898,7 @@ class Compiler:
 
     
     def __convert_string(self, string: str) -> tuple[ir.Value, ir.Type]:
-        string = string.replace("\\n", "\n\0")
+        string = string.replace("\\n", "\n")
         fmt = f"{string}\0"
         c_fmt = ir.Constant(ir.ArrayType(ir.IntType(8), len(fmt)), bytearray(fmt.encode("utf8")))
         global_fmt = ir.GlobalVariable(self.module, c_fmt.type, name=f'__str_{self.__increment_counter()}')
