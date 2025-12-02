@@ -58,6 +58,8 @@ class Parser:
             TokenType.BANG: self.__parse_prefix_expression,
             TokenType.NEW: self.__parse_new_struct_expression,
             TokenType.MATCH: self.__parse_match_expression,
+            TokenType.ASTERISK: self.__parse_prefix_expression,
+            TokenType.AMPERSAND: self.__parse_prefix_expression,
         }
         self.infix_parse_fns: dict[TokenType, Callable[[Expression], Expression]] = {
             TokenType.PLUS: self.__parse_infix_expression,
@@ -107,10 +109,18 @@ class Parser:
             raise self.peek_token.add_exception_info(ExpectedTokenError(f"expected next token to be {tt}, got {self.peek_token.type}"))
         
     def __expect_peek_type_name(self):
-        if self.__peek_token_is(TokenType.TYPE) or self.__peek_token_is(TokenType.IDENT):
+        if self.__peek_token_is(TokenType.AMPERSAND):
             self.__next_token()
+            if self.__peek_token_is(TokenType.TYPE) or self.__peek_token_is(TokenType.IDENT):
+                self.__next_token()
+                self.current_token.literal = '&' + self.current_token.literal
+            else:
+                self.__peek_error(TokenType.TYPE)
         else:
-            self.__peek_error(TokenType.TYPE)
+            if self.__peek_token_is(TokenType.TYPE) or self.__peek_token_is(TokenType.IDENT):
+                self.__next_token()
+            else:
+                self.__peek_error(TokenType.TYPE)
         
     def __current_precedence(self) -> PrecedenceType:
         prec: Optional[PrecedenceType] = PRECEDENCES.get(self.current_token.type)
@@ -320,7 +330,7 @@ class Parser:
 
         while not self.__current_token_is(TokenType.RBRACE) and not self.__current_token_is(TokenType.EOF):
             if not self.__current_token_is(TokenType.IDENT):
-                self.__peek_error(TokenType.IDENT)   # yields a helpful error message
+                self.__peek_error(TokenType.IDENT)
             field_name = self.current_token.literal
 
             self.__expect_peek(TokenType.COLON)
@@ -385,7 +395,6 @@ class Parser:
             self.__next_token()
         
         return UnionStatement(name, variants)
-
     # endregion
 
     # region Expression Methods
@@ -425,7 +434,6 @@ class Parser:
     
     def __parse_block_expression(self) -> BlockExpression:
         expr = BlockExpression()
-        # Enter the block: current_token should move to the first token after '{'
         self.__next_token()
 
         while not self.__current_token_is(TokenType.RBRACE) and not self.__current_token_is(TokenType.EOF):
@@ -479,8 +487,6 @@ class Parser:
     
     def __parse_pipe_call_expression(self, lhs: Expression) -> Expression:
         self.__expect_peek(TokenType.IDENT)
-
-        self.__next_token()
         func_ident = IdentifierLiteral(self.current_token.literal)
 
         if self.__peek_token_is(TokenType.LPAREN):
@@ -523,7 +529,6 @@ class Parser:
     def __parse_new_struct_expression(self) -> NewStructExpression:
         if not (self.__peek_token_is(TokenType.TYPE) or self.__peek_token_is(TokenType.IDENT)):
             self.__peek_error(TokenType.TYPE)
-
         self.__next_token()
         struct_ident = IdentifierLiteral(self.current_token.literal)
 
@@ -539,11 +544,23 @@ class Parser:
                 continue
 
             if not self.__current_token_is(TokenType.IDENT):
-                self.__peek_error(TokenType.IDENT)
+                raise self.current_token.add_exception_info(ExpectedTokenError(
+                    f"expected field IDENT inside struct literal, got {self.current_token.type}"
+                ))
             field_name = IdentifierLiteral(self.current_token.literal)
 
-            self.__expect_peek(TokenType.EQ)
+            if not self.__peek_token_is(TokenType.EQ):
+                if self.__peek_token_is(TokenType.SEMICOLON):
+                    raise self.peek_token.add_exception_info(ExpectedTokenError(
+                        f"expected '=' and an initializer for field `{field_name.value}`, got semicolon. "
+                        "Did you forget `= expr`? Or did a nested expression (like a `|>` pipe) fail to consume tokens?"
+                    ))
+                else:
+                    raise self.peek_token.add_exception_info(ExpectedTokenError(
+                        f"expected '=' after field `{field_name.value}`, got {self.peek_token.type}"
+                    ))
 
+            self.__next_token()
             self.__next_token()
 
             init_expr = self.__parse_expression(PrecedenceType.P_LOWEST)
@@ -553,8 +570,12 @@ class Parser:
                 self.__next_token()
                 self.__next_token()
                 continue
-            else:
+
+            if self.__peek_token_is(TokenType.RBRACE):
                 self.__next_token()
+                break
+
+            self.__next_token()
 
         if not self.__current_token_is(TokenType.RBRACE):
             self.__expect_peek(TokenType.RBRACE)
@@ -563,7 +584,6 @@ class Parser:
 
     def __parse_field_access_expression(self, lhs: Expression) -> FieldAccessExpression:
         self.__expect_peek(TokenType.IDENT)
-        self.__next_token()  
         field_ident = IdentifierLiteral(self.current_token.literal)
         return FieldAccessExpression(lhs, field_ident)
     
@@ -583,18 +603,16 @@ class Parser:
 
         return EnumVariantAccessExpression(lhs, variant_ident, value_expr)
 
-
     def __parse_match_expression(self) -> MatchExpression:
-        self.__next_token()  # skip 'match'
+        self.__next_token()
         match_expr = self.__parse_expression(PrecedenceType.P_LOWEST)
 
         self.__expect_peek(TokenType.LBRACE)
-        self.__next_token()  # skip '{'
+        self.__next_token()
 
         cases: list[tuple[EnumVariantAccessExpression, BlockExpression]] = []
 
         while not self.__current_token_is(TokenType.RBRACE) and not self.__current_token_is(TokenType.EOF):
-            # Skip commas between cases
             if self.__current_token_is(TokenType.COMMA):
                 self.__next_token()
                 continue
@@ -604,25 +622,23 @@ class Parser:
                     ExpectedTokenError(f"expected IDENT got {self.current_token}")
                 )
 
-            # Parse the "Type::Variant" part
             lhs = IdentifierLiteral(self.current_token.literal)
             self.__expect_peek(TokenType.DOUBLE_COLON)
-            self.__next_token()  # skip DOUBLE_COLON
+            self.__next_token()
             if not self.__current_token_is(TokenType.IDENT):
                 raise self.current_token.add_exception_info(
                     ExpectedTokenError(f"expected variant IDENT got {self.current_token}")
                 )
             rhs = IdentifierLiteral(self.current_token.literal)
 
-            # Parse optional receiver for unions/enums
             value_expr: Optional[IdentifierLiteral] = None
             if self.__peek_token_is(TokenType.LPAREN):
-                self.__next_token()  # skip to LPAREN
-                self.__next_token()  # move into parens
+                self.__next_token()
+                self.__next_token()
                 if self.__current_token_is(TokenType.IDENT):
                     value_expr = IdentifierLiteral(self.current_token.literal)
                     if self.__peek_token_is(TokenType.RPAREN):
-                        self.__next_token()  # skip RPAREN
+                        self.__next_token()
                     else:
                         self.__peek_error(TokenType.RPAREN)
                 else:
@@ -633,24 +649,21 @@ class Parser:
             enum_access = EnumVariantAccessExpression(lhs, rhs, value_expr)
 
             self.__expect_peek(TokenType.FATARROW)
-            self.__next_token()  # skip '=>'
+            self.__next_token()
 
             block = self.__parse_block_expression()
             cases.append((enum_access, block))
 
-            # Optional comma after a case
             if self.__peek_token_is(TokenType.COMMA):
                 self.__next_token()
 
-            self.__next_token()  # move to next token
+            self.__next_token()
 
         if not self.__current_token_is(TokenType.RBRACE):
             self.__expect_peek(TokenType.RBRACE)
 
-        self.__next_token()  # skip '}'
+        self.__next_token()
         return MatchExpression(match_expr, cases)
-
-
     # endregion
 
     # region Prefix Methods
@@ -659,7 +672,6 @@ class Parser:
             return I32Literal(int(self.current_token.literal))
         except ValueError:
             raise self.current_token.add_exception_info(LiteralParseError(f"Could not parse `{self.current_token.literal}` as an integer"))
-
         
     def __parse_f32_literal(self) -> Expression:
         try:

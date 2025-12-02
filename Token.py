@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import Any
 
 class TokenType(Enum):
     # Special tokens
@@ -51,6 +50,7 @@ class TokenType(Enum):
 
     # Prefix symbols
     BANG = "BANG"
+    AMPERSAND = "AMPERSAND"
 
     # Keywords
     LET = "LET"
@@ -75,7 +75,7 @@ class TokenType(Enum):
     TYPE = "TYPE"
 
 class Token:
-    def __init__(self, type: TokenType, literal: Any, line_no: int, position: int) -> None:
+    def __init__(self, type: TokenType, literal: str, line_no: int, position: int) -> None:
         self.type = type
         self.literal = literal
         self.line_no = line_no

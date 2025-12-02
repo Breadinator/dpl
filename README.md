@@ -5,8 +5,7 @@ The Definitely-Worth-Using Programming Language is a toy project I started as a 
 
 I started by following [this tutorial](https://www.youtube.com/playlist?list=PLCJHRjnsxJFoK8e-RaNZUa7R4BaPqczHX) but made modifications where I wanted to.
 
-## Examples
-### Functions and Structs
+## Example
 ```
 fn add(a: i32, b: i32) -> i32 => a + b;
 
@@ -22,17 +21,25 @@ struct Circle {
     radius: i32;
 }
 
+union OptionI32 {
+    Some(i32),
+    None
+}
+
 fn main() -> i32 {
+    let foo: i32 = 10;
+    let bar: &i32 = &foo;
+    let baz: i32 = *bar;
+    printf("baz = %i\n", baz);
+
     let p: Point = new Point {
         x = 10;
         y = 5;
     };
-
     let c: Circle = new Circle {
         center = p;
         radius = 10;
     };
-
     let c2: Circle = new Circle {
         center = new Point {
             x = 100;
@@ -40,37 +47,21 @@ fn main() -> i32 {
         };
         radius = 1;
     };
-
     printf("%i\n", c2.center.x);
 
-    0
-}
-
-```
-
-### Unions
-```
-union OptionI32 {
-    Some(i32),
-    None
-}
-
-fn main() -> i32 {
-    let foo: OptionI32 = OptionI32::Some(10);
-
-    let res: i32 = match foo {
+    let opt: OptionI32 = OptionI32::Some(10);
+    let res: i32 = match opt {
         OptionI32::Some(val) => {
-            1
+            val
         },
         OptionI32::None => {
             0
         },
     };
-
-    if res == 1 {
-        printf("Some!\n");
-    } else {
+    if res == 0 {
         printf("None!\n");
+    } else {
+        printf("Some (%i)!\n", res);
     };
 
     0

@@ -68,7 +68,7 @@ def parse_args(args: list[str]) -> tuple[str, bool, bool]:
     for arg in args:
         if arg == "--lexer_debug":
             lexer_debug = True
-        if arg == "--check":
+        elif arg == "--check":
             check = True
         else:
             path = arg

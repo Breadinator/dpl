@@ -1,31 +1,59 @@
+fn add(a: i32, b: i32) -> i32 => a + b;
+
+fn double(x: i32) -> i32 => x * 2;
+
+struct Point {
+    x: i32;
+    y: i32;
+}
+
+struct Circle {
+    center: Point;
+    radius: i32;
+}
+
 union OptionI32 {
     Some(i32),
     None
 }
 
 fn main() -> i32 {
-    let foo: OptionI32 = OptionI32::Some(10);
+    let foo: i32 = 10;
+    let bar: &i32 = &foo;
+    let baz: i32 = *bar;
+    printf("baz = %i\n", baz);
 
-    let res: i32 = match foo {
+    let p: Point = new Point {
+        x = 10;
+        y = 5;
+    };
+    let c: Circle = new Circle {
+        center = p;
+        radius = 10;
+    };
+    let c2: Circle = new Circle {
+        center = new Point {
+            x = 100;
+            y = p.x |> double;
+        };
+        radius = 1;
+    };
+    printf("%i\n", c2.center.x);
+
+    let opt: OptionI32 = OptionI32::Some(10);
+    let res: i32 = match opt {
         OptionI32::Some(val) => {
-            1
+            val
         },
         OptionI32::None => {
             0
         },
     };
-
-    if res == 1 {
-        printf("Some!\n");
-    } else {
+    if res == 0 {
         printf("None!\n");
+    } else {
+        printf("Some (%i)!\n", res);
     };
 
-    if res == 0 {
-        printf("Still none\n");
-        1
-    } else {
-        printf("Still some\n");
-        0
-    }
+    0
 }

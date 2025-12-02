@@ -145,6 +145,8 @@ class Lexer:
                     tok = self.__new_token(TokenType.NOT_EQ, ch + self.current_char)
                 else:
                     tok = self.__new_token(TokenType.BANG, self.current_char)
+            case '&':
+                tok = self.__new_token(TokenType.AMPERSAND, self.current_char)
             case '(':
                 tok = self.__new_token(TokenType.LPAREN, self.current_char)
             case ')':
