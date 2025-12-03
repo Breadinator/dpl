@@ -72,6 +72,7 @@ class TokenType(Enum):
     UNION = "UNION"
     NEW = "NEW"
     MATCH = "MATCH"
+    AS = "AS"
 
     # Typing
     TYPE = "TYPE"
@@ -113,6 +114,7 @@ KEYWORDS: dict[str, TokenType] = {
     "union": TokenType.UNION,
     "new": TokenType.NEW,
     "match": TokenType.MATCH,
+    "as": TokenType.AS,
 }
 
 TYPE_KEYWORDS: list[str] = ["i32", "f32", "str", "void"]

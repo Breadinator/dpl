@@ -396,7 +396,7 @@ class NamedValue(_StrCaching, _StringReferenceCaching, Value):
         ...
     
     @property
-    def function_type(self): # -> FunctionType:
+    def function_type(self) -> ir.FunctionType:
         ...
     
 

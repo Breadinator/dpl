@@ -1,0 +1,12 @@
+fn forty_two() -> &i32 {
+    let ptr: &i32 = malloc(4) as &i32;
+    *ptr = 42;
+    ptr
+}
+
+fn main() -> i32 {
+    let foo: &i32 = forty_two();
+    printf("%i\n", *foo);
+    free(foo);
+    0
+}

@@ -163,6 +163,8 @@ class FunctionType(Type):
     """
     The type for functions.
     """
+    return_type: ir.Type
+
     def __init__(self, return_type, args, var_arg=...) -> None:
         ...
     

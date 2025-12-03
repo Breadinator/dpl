@@ -383,7 +383,7 @@ class IRBuilder:
         ...
     
     @_castop('sext')
-    def sext(self, value, typ, name=...): # -> None:
+    def sext(self, value: ir.Value, typ: ir.Type, name=...) -> ir.Value:
         """
         Sign-extending integer upcast to a larger type:
             name = (typ) value

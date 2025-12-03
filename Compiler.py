@@ -68,6 +68,25 @@ class Compiler:
             self.env.define_record('printf', fn, ir.IntType(32))
         define_printf()
 
+        def define_malloc_free():
+            # malloc: i8* (i64)
+            malloc_ty = ir.FunctionType(
+                ir.IntType(8).as_pointer(),
+                [ir.IntType(64)]
+            )
+            malloc_fn = ir.Function(self.module, malloc_ty, name='malloc')
+            # free: void (i8*)
+            free_ty = ir.FunctionType(
+                self.type_map['void'],
+                [ir.IntType(8).as_pointer()]
+            )
+            free_fn = ir.Function(self.module, free_ty, name='free')
+
+            # register in environment so you can lookup like printf
+            self.env.define_record('malloc', malloc_fn, malloc_fn.function_type.return_type)
+            self.env.define_record('free', free_fn, free_fn.function_type.return_type)
+        define_malloc_free()
+
     def __increment_counter(self) -> int:
         self.counter += 1
         return self.counter
@@ -178,8 +197,8 @@ class Compiler:
         body = node.body
         params = node.params
         _param_names: list[str] = [p.name for p in params]
-        param_types: list[ir.Type] = [self.type_map[p.value_type.replace('&', '')] for p in params]
-        return_type = self.type_map[node.return_type]
+        param_types: list[ir.Type] = [self.__resolve_type(p.value_type) for p in params]
+        return_type = self.__resolve_type(node.return_type)
 
         fnty = ir.FunctionType(return_type, param_types)
         func = ir.Function(self.module, fnty, name)
@@ -564,7 +583,7 @@ class Compiler:
         return phi, then_type
 
 
-    def __visit_call_expression(self, node: CallExpression) -> tuple[ir.Instruction, ir.Type]:
+    def __visit_call_expression(self, node: CallExpression) -> tuple[ir.Value, ir.Type]:
         name = node.function.value
         params = node.args
         
@@ -578,8 +597,18 @@ class Compiler:
         ret = None
         match name:
             case 'printf':
-                ret = self.builtin_printf(args, types[0]) # pyright: ignore[reportArgumentType]
+                ret = self.__builtin_printf(args, types[0]) # pyright: ignore[reportArgumentType]
                 ret_type = self.type_map['i32']
+            case 'malloc':
+                if len(args) != 1:
+                    raise ValueError("malloc expects one argument: number of bytes")
+                ret, ret_type = self.__builtin_malloc(args[0])
+            case 'free':
+                if len(args) != 1:
+                    raise ValueError("free expects one argument: pointer")
+                call_instr = self.__builtin_free(args[0])
+                ret = call_instr
+                ret_type = self.type_map['void']
             case _:
                 record = self.env.lookup_record(name)
                 if record is None:
@@ -590,8 +619,10 @@ class Compiler:
         
         return ret, ret_type
     
-    def __visit_prefix_expression(self, node: PrefixExpression) -> tuple[ir.Value, ir.Type]:
+    def __visit_prefix_expression(self, node: PrefixExpression, return_pointer: bool = False) -> tuple[ir.Value, ir.Type]:
         op = node.operator
+
+        # ADDRESS-OF
         if op == '&':
             if isinstance(node.right_node, IdentifierLiteral):
                 record = self.env.lookup_record(node.right_node.value)
@@ -606,12 +637,14 @@ class Compiler:
             raise ValueResolverError("address-of supports only identifiers or field access")
 
         if op == '*':
-            ptr_to_ptr, ptr_type = self.__resolve_value(node.right_node, return_pointer=True)
-            if not isinstance(ptr_type, ir.PointerType):
+            ptr_to_ptr, ptr_to_ptr_type = self.__resolve_value(node.right_node, return_pointer=True)
+            if not isinstance(ptr_to_ptr_type, ir.PointerType):
                 raise TypeMismatchError("dereferencing a non-pointer")
             ptr = self.builder.load(ptr_to_ptr)
+            if return_pointer:
+                return ptr, ptr.type
             value = self.builder.load(ptr)
-            return value, ptr_type.pointee
+            return value, ptr.type.pointee # type: ignore
 
         val, typ = self.__resolve_value(node.right_node)
         if isinstance(typ, ir.FloatType):
@@ -624,7 +657,9 @@ class Compiler:
                 return self.builder.mul(val, ir.Constant(ir.IntType(32), -1)), typ
             if op == '!':
                 return self.builder.not_(val), ir.IntType(1)
+
         raise TypeError(f"unsupported prefix operator `{op}` for type {typ}")
+
 
     def __visit_new_struct_expression(self, node: NewStructExpression) -> tuple[ir.Value, ir.Type]:
         name = node.struct_ident.value
@@ -864,6 +899,15 @@ class Compiler:
         phi.add_incoming(ir.Constant(phi_ty, ir.Undefined), entry_block)
 
         return phi, phi_ty
+    
+    def __visit_cast_expression(self, node: CastExpression) -> tuple[ir.Value, ir.Type]:
+        expr_val, expr_typ = self.__resolve_value(node.expr)
+        target_typ = self.__resolve_type(node.target)
+
+        if isinstance(expr_typ, ir.PointerType) and isinstance(target_typ, ir.PointerType):
+            return self.builder.bitcast(expr_val, target_typ), target_typ
+        else:
+            raise CompilerException(f"casts between `{expr_typ}` to `{target_typ}` not supported")
     # endregion
 
     # endregion
@@ -889,18 +933,12 @@ class Compiler:
                     raise ValueResolverError(f"identifier `{node.value}` not found") # type: ignore
                 ptr = record.value
                 typ = record.typ
-
                 if return_pointer:
                     return ptr, typ
-
                 loaded = self.builder.load(ptr)
-                
                 if isinstance(typ, ir.PointerType):
-                    if not return_pointer and isinstance(loaded.type, ir.PointerType) and isinstance(loaded.type.pointee, (ir.IntType, ir.FloatType, ir.IntType)):
-                        return self.builder.load(loaded), loaded.type.pointee
                     return loaded, loaded.type
-                else:
-                    return loaded, typ
+                return loaded, typ
             case NodeType.NullLiteral:
                 return ir.Constant(ir.PointerType(ir.IntType(8)), None), ir.PointerType(ir.IntType(8))
             
@@ -913,7 +951,7 @@ class Compiler:
             case NodeType.CallExpression:
                 return self.__visit_call_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.PrefixExpression:
-                return self.__visit_prefix_expression(node) # pyright: ignore[reportArgumentType]
+                return self.__visit_prefix_expression(node, return_pointer) # pyright: ignore[reportArgumentType]
             case NodeType.NewStructExpression:
                 # Always return pointer to struct, do not load
                 return self.__visit_new_struct_expression(node) # pyright: ignore[reportArgumentType]
@@ -924,6 +962,8 @@ class Compiler:
                 return self.__visit_enum_variant_access_expression(node) # pyright: ignore[reportArgumentType]
             case NodeType.MatchExpression:
                 return self.__visit_match_expression(node) # pyright: ignore[reportArgumentType]
+            case NodeType.CastExpression:
+                return self.__visit_cast_expression(node) # pyright: ignore[reportArgumentType]
 
             case _:
                 raise NotImplementedError(f"not implemented: {node.type().name}")
@@ -942,7 +982,7 @@ class Compiler:
         return ptr, ir.IntType(8).as_pointer()
 
 
-    def builtin_printf(self, params: list[ir.Value], return_type: ir.Type) -> instructions.CallInstr:
+    def __builtin_printf(self, params: list[ir.Value], return_type: ir.Type) -> instructions.CallInstr:
         record = self.env.lookup_record('printf')
         if record is None or len(params) == 0:
            raise LookupError("couldn't lookup `printf` or params was none") 
@@ -971,6 +1011,40 @@ class Compiler:
         # Can raise
         fmt_arg = self.builder.bitcast(fmt_val, ir.IntType(8).as_pointer())
         return self.builder.call(func, [fmt_arg, *rest_params])
+    
+    def __builtin_malloc(self, size_in_bytes: ir.Value | int) -> tuple[ir.Value, ir.Type]:
+        record = self.env.lookup_record('malloc')
+        if record is None:
+            raise LookupError("malloc not declared")
+        malloc_fn = record.value
+
+        if isinstance(size_in_bytes, int):
+            size_arg = ir.Constant(ir.IntType(64), size_in_bytes)
+        else:
+            # ensure it is i64; if not, cast
+            size_arg = size_in_bytes
+            if not isinstance(size_arg.type, ir.IntType) or size_arg.type.width != 64:
+                size_arg = self.builder.sext(size_arg, ir.IntType(64))
+
+        raw_ptr = self.builder.call(malloc_fn, [size_arg])
+        return raw_ptr, ir.IntType(8).as_pointer()
+    
+    def __builtin_free(self, ptr: ir.Value) -> instructions.CallInstr:
+        record = self.env.lookup_record('free')
+        if record is None:
+            raise LookupError("free not declared")
+        free_fn = record.value
+
+        # ensure i8*
+        i8ptr = ir.IntType(8).as_pointer()
+        if not (isinstance(ptr.type, ir.PointerType) and ptr.type.pointee == ir.IntType(8)):
+            raw = self.builder.bitcast(ptr, i8ptr)
+        else:
+            raw = ptr
+
+        call_instr = self.builder.call(free_fn, [raw])
+        return call_instr
+
 
     def __extract_ret(self, node: BlockExpression):
         if node.return_expression is not None:

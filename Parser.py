@@ -41,6 +41,7 @@ PRECEDENCES: dict[TokenType, PrecedenceType] = {
     TokenType.MINUS_EQ: PrecedenceType.P_EQUALS,
     TokenType.MUL_EQ: PrecedenceType.P_EQUALS,
     TokenType.DIV_EQ: PrecedenceType.P_EQUALS,
+    TokenType.AS: PrecedenceType.P_CALL,
 }
 
 class Parser:
@@ -89,6 +90,7 @@ class Parser:
             TokenType.MINUS_EQ: self.__parse_assignment_expression,
             TokenType.MUL_EQ: self.__parse_assignment_expression,
             TokenType.DIV_EQ: self.__parse_assignment_expression,
+            TokenType.AS: self.__parse_cast_expression,
         }
     
     # region Parser Helpers
@@ -673,6 +675,11 @@ class Parser:
 
         self.__next_token()
         return MatchExpression(match_expr, cases)
+    
+    def __parse_cast_expression(self, lhs: Expression) -> CastExpression:
+        self.__next_token() # skip as
+        typ = self.__parse_type()
+        return CastExpression(lhs, typ)
     
     def __parse_type(self) -> str:
         if self.__current_token_is(TokenType.TYPE) or self.__current_token_is(TokenType.IDENT):

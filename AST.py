@@ -31,6 +31,7 @@ class NodeType(Enum):
     FieldAccessExpression = "FieldAccessExpression"
     EnumVariantAccessExpression = "EnumVariantAccessExpression"
     MatchExpression = "MatchExpression"
+    CastExpression = "CastExpression"
 
     # Literals
     I32Literal = "I32Literal"
@@ -444,6 +445,20 @@ class MatchExpression(Expression):
             "type": self.type().value,
             "match": self.match.json(),
             "cases": [[case[0].json(), case[1].json()] for case in self.cases]
+        }
+    
+class CastExpression(Expression):
+    def __init__(self, expr: Expression, target: str) -> None:
+        self.expr = expr
+        self.target = target
+
+    def type(self):
+        return NodeType.CastExpression
+    
+    def json(self) -> dict[str, Any]:
+        return {
+            "expr": self.expr.json(),
+            "target": self.target,
         }
 # endregion
 
