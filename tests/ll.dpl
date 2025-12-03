@@ -3,23 +3,23 @@ struct Node {
     next: &Node;
 }
 
+fn insert_node(parent: &Node, value: i32) -> void {
+    let ptr: &Node = malloc(sizeof(Node)) as &Node;
+    *ptr = new Node {
+        value = value;
+        next = null;
+    };
+    parent.next = ptr;
+}
+
 fn main() -> i32 {
     let head: Node = new Node {
         value = 10;
         next = null;
     };
-
-    if head.next == null {
-        printf("This should print\n");
-    } else {
-        printf("This shouldn't print\n");
-    };
-
-    let b: Node = new Node {
-        value = 5;
-        next = null;
-    };
-    head.next = &b;
+    insert_node(&head, 5);
+    insert_node(head.next, 12);
     printf("%i\n", head.next.value);
+    printf("%i\n", head.next.next.value);
     0
 }

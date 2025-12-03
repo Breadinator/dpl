@@ -265,26 +265,33 @@ class Parser:
         if self.__peek_token_is(TokenType.RPAREN):
             self.__next_token()
             return params
-        
-        self.__next_token()
 
-        first_param = FunctionParameter(self.current_token.literal, "")
-        self.__expect_peek(TokenType.COLON)
-        self.__next_token()
-        first_param.value_type = self.current_token.literal
-        params.append(first_param)
-
-        while self.__peek_token_is(TokenType.COMMA):
+        while True:
             self.__next_token()
-            self.__next_token()
+            if not self.__current_token_is(TokenType.IDENT):
+                self.__current_error(TokenType.IDENT)
+            param_name = self.current_token.literal
 
-            param = FunctionParameter(self.current_token.literal, "")
             self.__expect_peek(TokenType.COLON)
-            self.__next_token()
-            param.value_type = self.current_token.literal
-            params.append(param)
-        
-        self.__expect_peek(TokenType.RPAREN)
+
+            self.__expect_peek_type_name()
+            param_type = self.current_token.literal
+
+            params.append(FunctionParameter(param_name, param_type))
+
+            if self.__peek_token_is(TokenType.COMMA):
+                self.__next_token()  # consume ','
+                continue
+            elif self.__peek_token_is(TokenType.RPAREN):
+                self.__next_token()  # consume ')'
+                break
+            else:
+                self.__peek_error(TokenType.RPAREN)
+                raise self.peek_token.add_exception_info(
+                    ExpectedTokenError(
+                        f"expected ',' or ')' after parameter, got {self.peek_token.type}"
+                    )
+                )
 
         return params
 

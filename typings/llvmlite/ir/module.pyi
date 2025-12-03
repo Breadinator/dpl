@@ -7,6 +7,7 @@ from llvmlite import ir
 
 class Module:
     triple: str
+    data_layout: str
 
     def __init__(self, name=..., context=...) -> None:
         ...

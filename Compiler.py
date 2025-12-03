@@ -1,5 +1,6 @@
 from llvmlite import ir
 from llvmlite.ir import instructions
+from llvmlite import binding as llvm
 from typing import Optional
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from Parser import Parser
 from Exceptions import *
 
 class Compiler:
-    def __init__(self, dir: Path) -> None:
+    def __init__(self, dir: Path, triple: str = llvm.get_default_triple()) -> None:
         self.type_map: dict[str, ir.Type] = {
             "i32": ir.IntType(32),
             "f32": ir.FloatType(),
@@ -20,6 +21,7 @@ class Compiler:
         }
 
         self.module = ir.Module('main')
+        self.module.triple = triple
         self.builder = ir.IRBuilder()
 
         self.counter = 0
@@ -209,7 +211,7 @@ class Compiler:
 
         params_ptr: list[ir.AllocaInstr] = []
         for i, param in enumerate(params):
-            typ = self.type_map[param.value_type.replace('&', '')]  # underlying type
+            typ = self.__resolve_type(param.value_type)
             ptr = self.builder.alloca(typ)
             self.builder.store(func.args[i], ptr)
             params_ptr.append(ptr)
@@ -219,7 +221,7 @@ class Compiler:
 
         for i, param in enumerate(params):
             ptr = params_ptr[i]
-            base_type = self.type_map[param.value_type.replace('&', '')]
+            base_type = self.__resolve_type(param.value_type)
 
             if param.value_type.startswith('&'):
                 self.env.define_record(param.name, ptr, base_type.as_pointer())
@@ -229,6 +231,8 @@ class Compiler:
         self.env.define_record(name, func, return_type)
 
         self.compile(body)
+        if body.return_expression is None and not self.builder.block.is_terminated:
+            self.builder.ret_void()
 
         self.env = previous_env
         self.env.define_record(name, func, return_type, True, True)
@@ -275,11 +279,11 @@ class Compiler:
             if isinstance(left_type, ir.PointerType):
                 if isinstance(right_type, ir.PointerType):
                     if left_type.pointee != right_type.pointee:
-                        raise TypeError(f"Cannot assign pointer to {right_type.pointee} to pointer to {left_type.pointee}")
+                        raise TypeError(f"cannot assign pointer to {right_type.pointee} to pointer to {left_type.pointee}")
                     self.builder.store(right_value, left_ptr)
                 else:
                     if right_type != left_type.pointee:
-                        raise TypeError(f"Cannot assign value of type {right_type} to location expecting {left_type.pointee}")
+                        raise TypeError(f"cannot assign value of type {right_type} to location expecting {left_type.pointee}")
                     self.builder.store(right_value, left_ptr)
             else:
                 if isinstance(right_type, ir.PointerType):
@@ -582,11 +586,14 @@ class Compiler:
 
         return phi, then_type
 
-
     def __visit_call_expression(self, node: CallExpression) -> tuple[ir.Value, ir.Type]:
         name = node.function.value
         params = node.args
-        
+
+        if name == 'sizeof':
+            return ir.Constant(ir.IntType(64), self.__sizeof(self.__resolve_type(params[0].value))), ir.IntType(64)
+
+        # Handle regular calls
         args: list[ir.Value] = []
         types: list[ir.Type] = []
         for param in params:
@@ -618,6 +625,27 @@ class Compiler:
                 ret = self.builder.call(func, args)
         
         return ret, ret_type
+    
+    def __sizeof(self, typ: ir.Type) -> int:
+        if isinstance(typ, ir.IntType):
+            return typ.width // 8
+        elif isinstance(typ, ir.PointerType):
+            # 64-bit pointer
+            return 8
+        elif isinstance(typ, ir.IdentifiedStructType):
+            if not typ.elements:
+                # Self-referential or opaque struct: only count non-pointer fields
+                total = 0
+                for f in typ.elements:
+                    total += self.__sizeof(f)
+                return total
+            else:
+                total = 0
+                for f in typ.elements:
+                    total += self.__sizeof(f)
+                return total
+        else:
+            raise ValueError(f"Cannot sizeof type {typ}")
     
     def __visit_prefix_expression(self, node: PrefixExpression, return_pointer: bool = False) -> tuple[ir.Value, ir.Type]:
         op = node.operator
@@ -687,24 +715,66 @@ class Compiler:
                                             ir.Constant(ir.IntType(32), i)])
             self.builder.store(val, field_ptr)
 
-        return ptr, ir.PointerType(struct_type)
+        return self.builder.load(ptr), struct_type
 
-    def __visit_field_access_expression(self, node: FieldAccessExpression, return_pointer: bool = False) -> tuple[ir.Value, ir.Type]:
+    def __visit_field_access_expression(
+        self, node: FieldAccessExpression, return_pointer: bool = False
+    ) -> tuple[ir.Value, ir.Type]:
         base_val, base_type = self.__resolve_value(node.base, return_pointer=True)
-        while isinstance(base_type, ir.PointerType):
-            base_val = self.builder.load(base_val)
-            base_type = base_type.pointee
 
-        if not isinstance(base_type, ir.IdentifiedStructType):
+        struct_ptr = None
+
+        # direct pointer to struct
+        if isinstance(base_val.type, ir.PointerType) and isinstance(base_val.type.pointee, ir.IdentifiedStructType):
+            struct_ptr = base_val
+            struct_type = base_val.type.pointee
+
+        # pointer but not directly to struct
+        elif isinstance(base_val.type, ir.PointerType):
+            cur_ptr = base_val
+            cur_type = base_val.type
+            while isinstance(cur_type, ir.PointerType) and not isinstance(cur_type.pointee, ir.IdentifiedStructType):
+                cur_ptr = self.builder.load(cur_ptr)
+                cur_type = cur_ptr.type
+            if isinstance(cur_ptr.type, ir.PointerType) and isinstance(cur_ptr.type.pointee, ir.IdentifiedStructType):
+                struct_ptr = cur_ptr
+                struct_type = cur_ptr.type.pointee
+            else:
+                raise CompilerException("cannot access field on non-struct type (after resolving pointer chain)")
+
+        # raw struct 
+        elif isinstance(base_type, ir.IdentifiedStructType):
+            temp_ptr = self.builder.alloca(base_type)
+            if base_val.type != base_type:
+                raise CompilerException(f"unexpected base value type for field access: {base_val.type} vs {base_type}")
+            self.builder.store(base_val, temp_ptr)
+            struct_ptr = temp_ptr
+            struct_type = base_type
+
+        else:
             raise CompilerException("cannot access field on non-struct type")
 
-        struct_metadata = self.env.lookup_struct(base_type.name)
-        if struct_metadata is None:
-            raise LookupError(f"struct `{base_type.name}` not defined")
-        _, field_names, field_types = struct_metadata.llvm_struct, struct_metadata.field_names, struct_metadata.field_types
+        assert isinstance(struct_ptr.type, ir.PointerType)
+        assert isinstance(struct_type, ir.IdentifiedStructType)
 
-        idx = field_names.index(node.field.value)
-        field_ptr = self.builder.gep(base_val, [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), idx)])
+        struct_metadata = self.env.lookup_struct(struct_type.name)
+        if struct_metadata is None:
+            raise LookupError(f"struct `{struct_type.name}` not defined")
+        _, field_names, field_types = (
+            struct_metadata.llvm_struct,
+            struct_metadata.field_names,
+            struct_metadata.field_types,
+        )
+
+        try:
+            idx = field_names.index(node.field.value)
+        except ValueError:
+            raise FieldMismatchError(f"struct `{struct_type.name}` doesn't have field `{node.field.value}`")
+
+        field_ptr = self.builder.gep(
+            struct_ptr,
+            [ir.Constant(ir.IntType(32), 0), ir.Constant(ir.IntType(32), idx)]
+        )
 
         if return_pointer:
             return field_ptr, field_types[idx]
