@@ -296,17 +296,31 @@ class Compiler:
         return left_ptr, left_type
     
     def __visit_while_statement(self, node: WhileStatement) -> None:
-        test, _ = self.__resolve_value(node.condition)
+        func = self.builder.function
 
-        while_loop_entry = self.builder.append_basic_block(f"while_loop_entry_{self.__increment_counter()}")
-        while_loop_otherwise = self.builder.append_basic_block(f"while_loop_otherwise_{self.counter}")
+        cond_bb = func.append_basic_block(f"while_cond_{self.__increment_counter()}")
+        body_bb = func.append_basic_block(f"while_body_{self.counter}")
+        end_bb = func.append_basic_block(f"while_end_{self.counter}")
 
-        self.builder.cbranch(test, while_loop_entry, while_loop_otherwise)
-        self.builder.position_at_start(while_loop_entry)
+        self.breakpoints.append(end_bb)
+        self.continues.append(cond_bb)
+
+        self.builder.branch(cond_bb)
+
+        self.builder.position_at_start(cond_bb)
+        test_val, _ = self.__resolve_value(node.condition)
+        self.builder.cbranch(test_val, body_bb, end_bb)
+
+        self.builder.position_at_start(body_bb)
         self.compile(node.body)
-        test, _ = self.__resolve_value(node.condition)
-        self.builder.cbranch(test, while_loop_entry, while_loop_otherwise)
-        self.builder.position_at_start(while_loop_otherwise)
+        if getattr(self.builder.block, "terminator", None) is None:
+            self.builder.branch(cond_bb)
+
+        self.builder.position_at_start(end_bb)
+
+        self.breakpoints.pop()
+        self.continues.pop()
+
 
     def __visit_for_statement(self, node: ForStatement) -> None:
         prev_env = self.env
@@ -514,7 +528,6 @@ class Compiler:
     def __visit_if_expression(self, node: IfExpression) -> tuple[ir.Value, ir.Type]:
         cond_val, cond_type = self.__resolve_value(node.condition)
 
-        # normalize cond -> i1
         if isinstance(cond_type, ir.IntType) and cond_type.width != 1:
             zero = ir.Constant(cond_type, 0)
             test = self.builder.icmp_signed('!=', cond_val, zero)
@@ -529,25 +542,36 @@ class Compiler:
         else_bb = func.append_basic_block("if.else")
         merge_bb = func.append_basic_block("if.end")
 
-        # conditional branch into then/else
         self.builder.cbranch(test, then_bb, else_bb)
 
-        # --- then branch ---
         self.builder.position_at_end(then_bb)
-        then_val, then_type = self.__resolve_value(node.consequence)
-        # If we didn't already terminate the block, branch to merge
+
+        then_is_expr = node.consequence.return_expression is not None
+
+        if then_is_expr:
+            then_val, then_type = self.__resolve_value(node.consequence)
+        else:
+            self.compile(node.consequence)
+            then_val, then_type = None, None
+
         then_branches_to_merge = False
         if getattr(self.builder.block, "terminator", None) is None:
             self.builder.branch(merge_bb)
             then_branches_to_merge = True
         then_block_for_phi = self.builder.block if then_branches_to_merge else None
 
-        # --- else branch ---
         self.builder.position_at_end(else_bb)
+
         if node.alternative is not None:
-            else_val, else_type = self.__resolve_value(node.alternative)
+            else_is_expr = node.alternative.return_expression is not None
+            if else_is_expr:
+                else_val, else_type = self.__resolve_value(node.alternative)
+            else:
+                self.compile(node.alternative)
+                else_val, else_type = None, None
         else:
             else_val, else_type = None, None
+            else_is_expr = False
 
         else_branches_to_merge = False
         if getattr(self.builder.block, "terminator", None) is None:
@@ -555,13 +579,17 @@ class Compiler:
             else_branches_to_merge = True
         else_block_for_phi = self.builder.block if else_branches_to_merge else None
 
-        # --- merge block ---
         self.builder.position_at_end(merge_bb)
+
+        if then_type is None and else_type is None:
+            return ir.Constant(self.type_map["i32"], 0), self.type_map["i32"]
+
+        if (then_type is None) != (else_type is None):
+            raise TypeError("Mismatched types in if branches (one branch returns a value, the other doesn't)")
 
         if then_type != else_type:
             raise TypeError("Mismatched types in if branches")
 
-        # If no branch actually branched to merge, nothing to phi — return default/None
         incoming_blocks: list[ir.Block] = []
         incoming_values: list[ir.Value] = []
 
@@ -575,16 +603,15 @@ class Compiler:
             incoming_blocks.append(else_block_for_phi)
             incoming_values.append(else_val)
 
-        # If only one branch actually flows to merge, the result is the incoming value from that branch
         if len(incoming_blocks) == 1:
             return incoming_values[0], then_type
 
-        # Otherwise create a phi with exactly the same number of incoming entries as actual predecessors
-        phi = self.builder.phi(then_type) # pyright: ignore[reportArgumentType]
+        phi = self.builder.phi(then_type)
         for val, blk in zip(incoming_values, incoming_blocks):
             phi.add_incoming(val, blk)
 
         return phi, then_type
+
 
     def __visit_call_expression(self, node: CallExpression) -> tuple[ir.Value, ir.Type]:
         name = node.function.value

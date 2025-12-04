@@ -306,6 +306,8 @@ class Parser:
         condition = self.__parse_expression(PrecedenceType.P_LOWEST)
         self.__expect_peek(TokenType.LBRACE)
         body = self.__parse_block_expression()
+        if self.__current_token_is(TokenType.RBRACE):
+            self.__next_token()
         return WhileStatement(condition, body)
     
     def __parse_for_statement(self) -> ForStatement:
@@ -316,12 +318,15 @@ class Parser:
         self.__next_token()
         condition = self.__parse_expression(PrecedenceType.P_LOWEST)
         self.__expect_peek(TokenType.SEMICOLON)
-        self.__next_token() # skip ;
-        action = self.__parse_assignment_expression(self.__parse_expression(PrecedenceType.P_LOWEST))
+        self.__next_token()  # skip ;
+        action = self.__parse_expression(PrecedenceType.P_LOWEST)
+        assert isinstance(action, AssignExpression)
         if self.__peek_token_is(TokenType.RPAREN):
             self.__next_token()
         self.__expect_peek(TokenType.LBRACE)
         body = self.__parse_block_expression()
+        if self.__current_token_is(TokenType.RBRACE):
+            self.__next_token()
         return ForStatement(var_declaration, condition, action, body)
     
     def __parse_break_statement(self) -> BreakStatement:
